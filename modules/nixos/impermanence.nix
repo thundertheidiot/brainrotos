@@ -127,7 +127,7 @@ in {
         concatStringsSep " "
         (map (file:
           with file; ''
-            [ -f "${persistPath}" ] && cp -P "${persistPath}" "${path}"
+            [ -e "${persistPath}" ] && cp -P "${persistPath}" "${path}"
           '')
         cfg.files);
 
