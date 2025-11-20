@@ -32,7 +32,7 @@ in {
         apply = let
           mkDir' = {
             path,
-            persistPath ? "${cfg.persist.v1}/rootfs/${path}",
+            persistPath ? "${cfg.persist}/rootfs/${path}",
             permissions ? "1777",
             user ? "root",
             group ? "root",
