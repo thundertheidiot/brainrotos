@@ -60,9 +60,32 @@ in {
       ];
     })
     (mkIf (cfg.enable && cfg.defaults) {
-      environment.etc."xdg/plasma-org.kde.plasma.desktop-kwinrc".text = ''
+      environment.etc."xdg/kwinrc".text = ''
         [Plugins]
         shakecursorEnabled=false
+      '';
+
+      environment.etc."xdg/kdeglobals".text = ''
+        [General]
+        UseSystemBell=false
+
+        [KDE]
+        LookAndFeelPackage=org.kde.breezedark.desktop
+      '';
+
+      environment.etc."xdg/kcminputrc".text = ''
+        [Mouse]
+        cursorTheme=Breeze_Light
+      '';
+
+      environment.etc."xdg/gtk-3.0/settings.ini".text = ''
+        [Settings]
+        gtk-application-prefer-dark-theme=true
+      '';
+
+      environment.etc."xdg/gtk-4.0/settings.ini".text = ''
+        [Settings]
+        gtk-application-prefer-dark-theme=true
       '';
     })
   ];
