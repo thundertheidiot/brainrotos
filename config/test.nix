@@ -6,6 +6,7 @@
       impermanence.v1.enable = true;
       efi.v1.enable = true;
       ramcache.v1.enable = true;
+      firefox.v1.enable = true;
     };
 
     nixpkgs.hostPlatform = {system = "x86_64-linux";};
