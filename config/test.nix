@@ -16,5 +16,7 @@
       extraGroups = ["wheel"];
       initialPassword = "password";
     };
+
+    users.users.root.initialPassword = "password";
   };
 }
