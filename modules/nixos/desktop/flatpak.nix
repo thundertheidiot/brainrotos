@@ -36,6 +36,18 @@ in {
           flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
         '';
       };
+
+      brainrotos.impermanence.v1.directories = [
+        {
+          path = "/var/lib/flatpak";
+          permissions = "755";
+        }
+      ];
+
+      # clean flatpak cache every 10 days
+      systemd.tmpfiles.rules = [
+        "R! /var/tmp/flatpak-cache-* - - - 10d"
+      ];
     })
     (mkIf (cfg.enable && config.brainrotos.desktop.plasma.v1.enable) {
       environment.systemPackages = [
