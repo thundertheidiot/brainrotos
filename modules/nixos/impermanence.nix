@@ -146,7 +146,7 @@ in {
                 RemainAfterExit = true;
                 # Service is stopped before shutdown
                 ExecStop = pkgs.writeShellScript name ''
-                  mkdir --parents "${persistPath}"
+                  mkdir --parents "$(dirname ${persistPath})"
                   cp -P "${path}" "${persistPath}"
                 '';
               };
