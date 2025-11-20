@@ -128,8 +128,8 @@ in {
         (map (file:
           with file; ''
             [ -f "${persistPath}" ] && cp -P "${persistPath}" "${path}"
-          ''))
-        cfg.files;
+          '')
+        cfg.files);
 
       systemd.services = listToAttrs (map
         (file:
