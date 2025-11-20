@@ -27,27 +27,27 @@ in {
         ];
       };
       "/boot" = {
-        label = mkDefault "brainrotos-boot";
+        label = mkDefault "bros-boot";
       };
       "/nix" = {
-        label = mkDefault "brainrotos-main";
+        label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
         options = mkDefault "subvolume=@nix";
         neededForBoot = true;
       };
       "/home" = {
-        label = mkDefault "brainrotos-main";
+        label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
         options = mkDefault "subvolume=@home";
       };
       "/tmp" = {
-        label = mkDefault "brainrotos-main";
+        label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
         options = mkDefault "subvolume=@tmp";
         neededForBoot = true;
       };
       "/var/tmp" = {
-        label = mkDefault "brainrotos-main";
+        label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
         options = mkDefault "subvolume=@var_tmp";
       };
