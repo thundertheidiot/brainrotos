@@ -44,6 +44,12 @@ in {
           ImproveSuggest = false;
         };
 
+        FirefoxHome = {
+          SponsoredTopSites = false;
+          SponsoredStories = false;
+          SponsoredPocket = false;
+        };
+
         ExtensionSettings =
           mapAttrs (_: v: {
             installation_mode = "force_installed";
