@@ -29,6 +29,11 @@ in {
       wayland.enable = true;
     };
 
+    environment.systemPackages = [
+      pkgs.kdePackages.sddm-kcm
+    ];
+
+    # impermanence
     brainrotos.impermanence.v1.directories = [
       {
         path = "/var/lib/sddm";
