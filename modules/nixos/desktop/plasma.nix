@@ -78,6 +78,12 @@ in {
         cursorTheme=Breeze_Light
       '';
 
+      environment.etc."xdg/kglobalshortcutsrc".text = ''
+        [kwin]
+        Window Maximize=Meta+Up
+        Overview=Meta
+      '';
+
       environment.etc."xdg/gtk-3.0/settings.ini".text = ''
         [Settings]
         gtk-application-prefer-dark-theme=true
