@@ -31,19 +31,19 @@ in {
       };
       "/nix" = {
         label = mkDefault "bros-main";
-        fsType = mkDefault "btrfs";
-        options = mkDefault ["subvol=@nix"];
+        fsType = "btrfs";
+        options = ["subvol=@nix"];
         neededForBoot = true;
       };
       "/home" = {
         label = mkDefault "bros-main";
-        fsType = mkDefault "btrfs";
-        options = mkDefault ["subvol=@home"];
+        fsType = "btrfs";
+        options = ["subvol=@home"];
       };
       "/tmp" = {
         label = mkDefault "bros-main";
-        fsType = mkDefault "btrfs";
-        options = mkDefault ["subvol=@tmp"];
+        fsType = "btrfs";
+        options = ["subvol=@tmp"];
         neededForBoot = true;
       };
       "/var/tmp" = {
