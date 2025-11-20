@@ -28,6 +28,7 @@ in {
       };
       "/boot" = {
         label = mkDefault "bros-boot";
+        fsType = "vfat";
       };
       "/nix" = {
         label = mkDefault "bros-main";
@@ -48,8 +49,8 @@ in {
       };
       "/var/tmp" = {
         label = mkDefault "bros-main";
-        fsType = mkDefault "btrfs";
-        options = mkDefault ["subvol=@var_tmp"];
+        fsType = "btrfs";
+        options = ["subvol=@var_tmp"];
       };
     };
   };
