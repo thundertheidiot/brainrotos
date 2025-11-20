@@ -5,5 +5,6 @@
     ./desktop
     ./impermanence.nix
     ./label-disks.nix
+    ./ramcache.nix
   ];
 }

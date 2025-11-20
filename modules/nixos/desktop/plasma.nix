@@ -1,6 +1,7 @@
 {
   lib,
   config,
+  pkgs,
   ...
 }: let
   inherit (lib) mkIf;
@@ -35,6 +36,12 @@ in {
         user = "sddm";
         group = "sddm";
       }
+    ];
+
+    brainrotos.ramcache.paths.v1 = with pkgs.kdePackages; [
+      dolphin
+      kwin
+      plasma-desktop
     ];
   };
 }
