@@ -17,6 +17,6 @@
       initialPassword = "password";
     };
 
-    users.users.root.initialPassword = "password";
+    users.users.root.password = "password";
   };
 }
