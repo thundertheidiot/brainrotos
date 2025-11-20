@@ -4,49 +4,66 @@
   pkgs,
   ...
 }: let
-  inherit (lib) mkIf;
+  inherit (lib) mkIf mkMerge;
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
   cfg = config.brainrotos.desktop.plasma.v1;
 in {
   options = {
-    brainrotos.desktop.plasma.v1.enable = mkOption {
-      type = bool;
-      default = true;
-      description = "Enable KDE plasma";
+    brainrotos.desktop.plasma.v1 = {
+      enable = mkOption {
+        type = bool;
+        default = false;
+        description = "Enable KDE plasma";
+      };
+      defaults = mkOption {
+        type = bool;
+        default = true;
+        description = "Default BrainrotOS settings for KDE Plasma.";
+      };
     };
   };
 
-  config = mkIf cfg.enable {
-    services.desktopManager.plasma6 = {
-      enable = true;
-      enableQt5Integration = true;
-    };
+  config = mkMerge [
+    (mkIf cfg.enable {
+      services.desktopManager.plasma6 = {
+        enable = true;
+        enableQt5Integration = true;
+      };
 
-    services.displayManager.sddm = {
-      enable = true;
-      wayland.enable = true;
-    };
+      services.displayManager.sddm = {
+        enable = true;
+        wayland.enable = true;
+      };
 
-    environment.systemPackages = [
-      pkgs.kdePackages.sddm-kcm
-    ];
+      environment.systemPackages = [
+        pkgs.kdePackages.sddm-kcm
+      ];
+    })
+    (mkIf cfg.enable {
+      # impermanence
+      brainrotos.impermanence.v1.directories = [
+        {
+          path = "/var/lib/sddm";
+          permissions = "750";
+          user = "sddm";
+          group = "sddm";
+        }
+      ];
 
-    # impermanence
-    brainrotos.impermanence.v1.directories = [
-      {
-        path = "/var/lib/sddm";
-        permissions = "750";
-        user = "sddm";
-        group = "sddm";
-      }
-    ];
-
-    brainrotos.ramcache.v1.paths = with pkgs.kdePackages; [
-      dolphin
-      kwin
-      plasma-desktop
-    ];
-  };
+      # cache components to ram on boot
+      brainrotos.ramcache.v1.paths = with pkgs.kdePackages; [
+        dolphin
+        kwin
+        plasma-desktop
+      ];
+    })
+    (mkIf (cfg.enable && cfg.defaults) {
+      environment.etc."xdg/plasma-org.kde.plasma.desktop-kwinrc".text = ''
+        [Plugins]
+        shakecursorEnabled=false
+      '';
+    })
+  ];
 }
