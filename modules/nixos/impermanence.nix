@@ -7,6 +7,7 @@
   inherit (lib) mkIf mkMerge isString;
   inherit (lib.options) mkOption;
   inherit (lib.lists) flatten;
+  inherit (lib.attrsets) filterAttrs mapAttrsToList;
   inherit (lib.types) listOf bool str attrs either;
 
   cfg = config.brainrotos.impermanence;
@@ -92,6 +93,13 @@ in {
     })
 
     # fixes/hacks
+    (mkIf cfg.enable.v1 {
+      systemd.tmpfiles.rules =
+        mapAttrsToList
+        (name: user: "d ${user.home} 0700 ${name} ${user.group} - -")
+        (filterAttrs (_name: attrs: attrs.createHome) config.users.users);
+    })
+
     (mkIf cfg.enable.v1 {
       environment.etc = builtins.listToAttrs (builtins.map (loc: {
         name = loc;
