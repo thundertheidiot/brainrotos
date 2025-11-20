@@ -7,7 +7,8 @@
   inherit (lib) mkIf mkMerge isString;
   inherit (lib.options) mkOption;
   inherit (lib.lists) flatten;
-  inherit (lib.attrsets) filterAttrs mapAttrsToList;
+  inherit (lib.strings) concatStringsSep replaceStrings;
+  inherit (lib.attrsets) filterAttrs mapAttrsToList listToAttrs;
   inherit (lib.types) listOf bool str attrs either;
 
   cfg = config.brainrotos.impermanence.v1;
@@ -50,6 +51,31 @@ in {
           list: map mkDir list;
         description = "Directories to persist across reboots.";
       };
+
+      files = mkOption {
+        type = listOf (either attrs str);
+        default = [];
+        apply = let
+          mkFile' = {
+            path,
+            persistPath ? "${cfg.persist}/rootfs/${path}",
+            permissions ? "1777",
+            user ? "root",
+            group ? "root",
+            wantedBy ? [],
+            before ? [],
+          }: {
+            inherit path persistPath permissions user group wantedBy before;
+          };
+
+          mkFile = file:
+            if isString file
+            then mkFile' {path = file;}
+            else mkFile' file;
+        in
+          list: map mkFile list;
+        description = "Files to persist across reboots.";
+      };
     };
   };
 
@@ -67,6 +93,10 @@ in {
         "/var/lib/fwupd"
         "/var/cache/fwupd"
         "/var/lib/fprint"
+      ];
+
+      brainrotos.impermanence.v1.files = [
+        "/etc/localtime"
       ];
     })
 
@@ -91,6 +121,39 @@ in {
         ])
       cfg.directories);
     })
+    # Create and mount directories
+    (mkIf cfg.enable {
+      boot.postBootCommands =
+        concatStringsSep " "
+        (map (file:
+          with file; ''
+            [ -f "${persistPath}" ] && cp -P "${persistPath}" "${path}"
+          ''))
+        cfg.files;
+
+      systemd.services = listToAttrs (map
+        (file:
+          with file; let
+            name = "persist-${replaceStrings ["/"] ["_"] path}";
+          in {
+            inherit name;
+            value = {
+              wantedBy = ["graphical.target"];
+              path = [pkgs.util-linux];
+              unitConfig.defaultDependencies = true;
+              serviceConfig = {
+                Type = "oneshot";
+                RemainAfterExit = true;
+                # Service is stopped before shutdown
+                ExecStop = pkgs.writeShellScript name ''
+                  mkdir --parents "${persistPath}"
+                  cp -P "${path}" "${persistPath}"
+                '';
+              };
+            };
+          })
+        cfg.files);
+    })
 
     ### fixes/hacks
 
@@ -111,6 +174,7 @@ in {
     })
 
     # /etc/shadow (passwords)
+    # cannot be handled through files, must run before user setup
     (mkIf cfg.enable (let
       pShadow = "${cfg.persist}/rootfs/etc/shadow";
     in {
