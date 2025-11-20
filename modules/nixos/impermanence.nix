@@ -52,9 +52,9 @@ in {
     };
   };
 
-  config = mkIf cfg.enable.v1 (mkMerge [
-    (mkIf cfg.defaultDirectories.v1 {
-      config.brainrotos.impermanence.directories.v1 = [
+  config = mkMerge [
+    (mkIf cfg.enable.v1 {
+      brainrotos.impermanence.directories.v1 = [
         {
           path = "/var/log";
           permissions = "711";
@@ -70,7 +70,7 @@ in {
     })
 
     # Create and mount directories
-    {
+    (mkIf cfg.enable.v1 {
       systemd.mounts = map (dir:
         with dir; {
           where = path;
@@ -89,17 +89,17 @@ in {
           "d ${path} ${permissions} ${user} ${group} - -"
         ])
       cfg.directories.v1);
-    }
+    })
 
     # fixes/hacks
-    {
+    (mkIf cfg.enable.v1 {
       environment.etc = builtins.listToAttrs (builtins.map (loc: {
         name = loc;
         value = {source = "${cfg.persist.v1}/rootfs/etc/${loc}";};
       }) ["machine-id"]);
-    }
+    })
     # etc shadow
-    (let
+    (mkIf cfg.enable.v1 (let
       pShadow = "${cfg.persist.v1}/rootfs/etc/shadow";
     in {
       system.activationScripts = {
@@ -135,11 +135,11 @@ in {
           '';
         };
       };
-    })
+    }))
 
     # openssh
     {
-      systemd.tmpfiles = ["d ${cfg.persist.v1}/ssh 755 root root - -"];
+      systemd.tmpfiles.rules = ["d ${cfg.persist.v1}/ssh 755 root root - -"];
 
       services.openssh.hostKeys = [
         {
@@ -153,5 +153,5 @@ in {
         }
       ];
     }
-  ]);
+  ];
 }

@@ -7,7 +7,7 @@
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
-  cfg = config.brainrotos;
+  cfg = config.brainrotos.desktop;
 in {
   options = {
     brainrotos.desktop.plasma.v1 = mkOption {
@@ -17,7 +17,7 @@ in {
     };
   };
 
-  config = mkIf cfg.desktop.plasma.v1 {
+  config = mkIf cfg.plasma.v1 {
     services.desktopManager.plasma6 = {
       enable = true;
       enableQt5Integration = true;

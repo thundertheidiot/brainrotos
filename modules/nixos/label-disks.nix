@@ -32,24 +32,24 @@ in {
       "/nix" = {
         label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
-        options = mkDefault "subvol=@nix";
+        options = mkDefault ["subvol=@nix"];
         neededForBoot = true;
       };
       "/home" = {
         label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
-        options = mkDefault "subvol=@home";
+        options = mkDefault ["subvol=@home"];
       };
       "/tmp" = {
         label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
-        options = mkDefault "subvol=@tmp";
+        options = mkDefault ["subvol=@tmp"];
         neededForBoot = true;
       };
       "/var/tmp" = {
         label = mkDefault "bros-main";
         fsType = mkDefault "btrfs";
-        options = mkDefault "subvol=@var_tmp";
+        options = mkDefault ["subvol=@var_tmp"];
       };
     };
   };

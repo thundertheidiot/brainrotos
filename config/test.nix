@@ -8,6 +8,7 @@
     };
 
     nixpkgs.hostPlatform = {system = "x86_64-linux";};
+    system.stateVersion = "25.11";
 
     users.users.test = {
       isNormalUser = true;
