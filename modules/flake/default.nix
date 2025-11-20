@@ -27,7 +27,10 @@
     mapAttrs' (n: v: {
       name = getName.${v} n;
       value = inputs.nixpkgs.lib.nixosSystem {
-        modules = ["${inputs.self.outPath}/config/${n}"];
+        modules = [
+          "${inputs.self.outPath}/config/${n}"
+          "${inputs.self.outPath}/modules/nixos"
+        ];
       };
     }) (readDir "${inputs.self.outPath}/config");
 }
