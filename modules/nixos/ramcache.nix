@@ -6,8 +6,9 @@
 }: let
   inherit (lib) mkIf;
   inherit (lib.options) mkOption;
-  inherit (lib.types) bool listOf str;
+  inherit (lib.types) bool;
   inherit (lib.strings) concatStringsSep;
+  inherit (builtins) toString;
 
   cfg = config.brainrotos.ramcache;
 in {
@@ -19,7 +20,7 @@ in {
     };
 
     brainrotos.ramcache.paths.v1 = mkOption {
-      type = listOf str;
+      apply = map toString;
       default = [];
       description = "Paths to cache.";
     };
