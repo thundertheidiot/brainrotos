@@ -8,17 +8,17 @@
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
-  cfg = config.brainrotos.desktop;
+  cfg = config.brainrotos.desktop.plasma.v1;
 in {
   options = {
-    brainrotos.desktop.plasma.v1 = mkOption {
+    brainrotos.desktop.plasma.v1.enable = mkOption {
       type = bool;
       default = true;
       description = "Enable KDE plasma";
     };
   };
 
-  config = mkIf cfg.plasma.v1 {
+  config = mkIf cfg.enable {
     services.desktopManager.plasma6 = {
       enable = true;
       enableQt5Integration = true;
@@ -29,7 +29,7 @@ in {
       wayland.enable = true;
     };
 
-    brainrotos.impermanence.directories.v1 = [
+    brainrotos.impermanence.v1.directories = [
       {
         path = "/var/lib/sddm";
         permissions = "750";
@@ -38,7 +38,7 @@ in {
       }
     ];
 
-    brainrotos.ramcache.paths.v1 = with pkgs.kdePackages; [
+    brainrotos.ramcache.v1.paths = with pkgs.kdePackages; [
       dolphin
       kwin
       plasma-desktop

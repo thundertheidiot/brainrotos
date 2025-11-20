@@ -7,10 +7,10 @@
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
-  cfg = config.brainrotos;
+  cfg = config.brainrotos.efi.v1;
 in {
   options = {
-    brainrotos.efi.v1 = mkOption {
+    brainrotos.efi.v1.enable = mkOption {
       type = bool;
       default = true;
       description = "Enable EFI support (required for auto rollback).";
@@ -18,12 +18,12 @@ in {
   };
 
   config = mkMerge [
-    (mkIf (!cfg.efi.v1) {
+    (mkIf (!cfg.enable) {
       boot.loader = {
         grub.enable = true;
       };
     })
-    (mkIf cfg.efi.v1 {
+    (mkIf cfg.enable {
       boot.loader = {
         systemd-boot = {
           enable = true;

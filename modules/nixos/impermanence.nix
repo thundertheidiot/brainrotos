@@ -10,23 +10,23 @@
   inherit (lib.attrsets) filterAttrs mapAttrsToList;
   inherit (lib.types) listOf bool str attrs either;
 
-  cfg = config.brainrotos.impermanence;
+  cfg = config.brainrotos.impermanence.v1;
 in {
   options = {
-    brainrotos.impermanence = {
-      enable.v1 = mkOption {
+    brainrotos.impermanence.v1 = {
+      enable = mkOption {
         type = bool;
         default = true;
         description = "Enable impermanence";
       };
 
-      persist.v1 = mkOption {
+      persist = mkOption {
         type = str;
         default = "/nix/persist";
         description = "Directory to use for persistance of files.";
       };
 
-      directories.v1 = mkOption {
+      directories = mkOption {
         type = listOf (either attrs str);
         default = [];
         apply = let
@@ -54,8 +54,8 @@ in {
   };
 
   config = mkMerge [
-    (mkIf cfg.enable.v1 {
-      brainrotos.impermanence.directories.v1 = [
+    (mkIf cfg.enable {
+      brainrotos.impermanence.v1.directories = [
         {
           path = "/var/log";
           permissions = "711";
@@ -71,7 +71,7 @@ in {
     })
 
     # Create and mount directories
-    (mkIf cfg.enable.v1 {
+    (mkIf cfg.enable {
       systemd.mounts = map (dir:
         with dir; {
           where = path;
@@ -82,33 +82,37 @@ in {
           before = ["graphical.target"] ++ before;
           wantedBy = ["graphical.target"] ++ wantedBy;
         })
-      cfg.directories.v1;
+      cfg.directories;
 
       systemd.tmpfiles.rules = flatten (map (dir:
         with dir; [
           "d ${persistPath} ${permissions} ${user} ${group} - -"
           "d ${path} ${permissions} ${user} ${group} - -"
         ])
-      cfg.directories.v1);
+      cfg.directories);
     })
 
-    # fixes/hacks
-    (mkIf cfg.enable.v1 {
+    ### fixes/hacks
+
+    # home directories
+    (mkIf cfg.enable {
       systemd.tmpfiles.rules =
         mapAttrsToList
         (name: user: "d ${user.home} 0700 ${name} ${user.group} - -")
         (filterAttrs (_name: attrs: attrs.createHome) config.users.users);
     })
 
-    (mkIf cfg.enable.v1 {
+    # machine id
+    (mkIf cfg.enable {
       environment.etc = builtins.listToAttrs (builtins.map (loc: {
         name = loc;
-        value = {source = "${cfg.persist.v1}/rootfs/etc/${loc}";};
+        value = {source = "${cfg.persist}/rootfs/etc/${loc}";};
       }) ["machine-id"]);
     })
-    # etc shadow
-    (mkIf cfg.enable.v1 (let
-      pShadow = "${cfg.persist.v1}/rootfs/etc/shadow";
+
+    # /etc/shadow (passwords)
+    (mkIf cfg.enable (let
+      pShadow = "${cfg.persist}/rootfs/etc/shadow";
     in {
       system.activationScripts = {
         # The first copy accounts for reactivation after startup, this example scenario should explain that
@@ -119,7 +123,7 @@ in {
         # 5. The old unchanged ${pShadow} is copied over /etc/shadow
         # 6. User is very confused, as their password has changed back
         etc_shadow = ''
-          mkdir --parents "${cfg.persist.v1}/rootfs/etc"
+          mkdir --parents "${cfg.persist}/rootfs/etc"
           [ -f "/etc/shadow" ] && cp /etc/shadow ${pShadow}
           [ -f "${pShadow}" ] && cp ${pShadow} /etc/shadow
         '';
@@ -138,7 +142,7 @@ in {
           RemainAfterExit = true;
           # Service is stopped before shutdown
           ExecStop = pkgs.writeShellScript "persist_etc_shadow" ''
-            mkdir --parents "${cfg.persist.v1}/rootfs/etc"
+            mkdir --parents "${cfg.persist}/rootfs/etc"
             cp /etc/shadow ${pShadow}
           '';
         };
@@ -147,15 +151,15 @@ in {
 
     # openssh
     {
-      systemd.tmpfiles.rules = ["d ${cfg.persist.v1}/ssh 755 root root - -"];
+      systemd.tmpfiles.rules = ["d ${cfg.persist}/ssh 755 root root - -"];
 
       services.openssh.hostKeys = [
         {
-          path = "${cfg.persist.v1}/ssh/ssh_host_ed25519_key";
+          path = "${cfg.persist}/ssh/ssh_host_ed25519_key";
           type = "ed25519";
         }
         {
-          path = "${cfg.persist.v1}/ssh/ssh_host_rsa_key";
+          path = "${cfg.persist}/ssh/ssh_host_rsa_key";
           type = "rsa";
           bits = 4096;
         }
