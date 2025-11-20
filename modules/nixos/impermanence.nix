@@ -93,6 +93,7 @@ in {
         "/var/lib/fwupd"
         "/var/cache/fwupd"
         "/var/lib/fprint"
+        "/var/db/sudo"
       ];
 
       brainrotos.impermanence.v1.files = [
