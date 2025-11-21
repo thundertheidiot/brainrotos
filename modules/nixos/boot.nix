@@ -33,6 +33,17 @@ in {
         efi.canTouchEfiVariables = mkDefault true;
         efi.efiSysMountPoint = mkDefault "/boot";
       };
+
+      # https://blog.printk.io/2020/02/systemd-boot-counting-and-boot-complete-target/
+      systemd.targets."boot-complete" = {
+        enable = true;
+        wantedBy = ["basic.target"];
+      };
+
+      systemd.services."systemd-bless-boot" = {
+        enable = true;
+        requires = ["display-manager.service"];
+      };
     })
   ];
 }
