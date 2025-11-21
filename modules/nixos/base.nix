@@ -1,6 +1,20 @@
-{lib, ...}: let
+{
+  config,
+  lib,
+  ...
+}: let
   inherit (lib) mkDefault;
+  inherit (lib.options) mkOption;
+  inherit (lib.types) str;
 in {
+  options = {
+    brainrotos.user.v1.name = mkOption {
+      default = "brainrotos";
+      type = str;
+      description = "Username for the user account.";
+    };
+  };
+
   config = {
     networking.networkmanager.enable = true;
 
@@ -9,6 +23,12 @@ in {
 
     boot.initrd.systemd.enable = true;
     boot.initrd.systemd.emergencyAccess = true;
+
+    users.users."${config.brainrotos.user.v1.name}" = {
+      isNormalUser = true;
+      extraGroups = ["wheel"];
+      initialPassword = mkDefault "password123";
+    };
 
     systemd.settings.Manager = {
       DefaultTimeoutStopSec = "3s";

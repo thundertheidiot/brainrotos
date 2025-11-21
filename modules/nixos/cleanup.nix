@@ -20,7 +20,7 @@ in {
       accessibility = mkOption {
         type = bool;
         default = true;
-        description = "Clean accessibility tooling.";
+        description = "Also disable accessibility tooling.";
       };
     };
   };

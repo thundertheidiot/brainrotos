@@ -27,7 +27,7 @@ in {
         ];
       };
       "/boot" = {
-        label = mkDefault "bros-boot";
+        label = mkDefault "BROS_BOOT";
         fsType = "vfat";
       };
       "/nix" = {

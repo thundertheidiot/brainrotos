@@ -1,0 +1,55 @@
+* BrainrotOS
+
+Work in progress proof of concept for a user friendly "immutable" distribution like Bazzite, but based on NixOS. 
+
+** Rough plan
+
+This repository defines nix options, e.g. =brainrotos.firefox.v1.enable=, which correspond to NixOS configuration, like enabling firefox in this case.
+
+Options are versioned to enable easier updates to the repository, without required user action, the naming scheme is not locked yet, due to the very early state of this project.
+
+Your BrainrotOS machine contains a local nix configuration, in =/nix/osconfig/default.nix=, that sets these options to something (this can hopefully be generated later).
+
+Your machine builds the flake in =--impure= mode, and the flake imports the local configuration.
+
+** Installation
+
+These instructions will obviously change to become more user friendly and less rigid later. This is easiest to complete from a NixOS live iso.
+
+Create two partitions, a =FAT32= boot partition with the =esp= flag set, and a btrfs main partition.
+
+The boot partition should be labeled =BROS_BOOT= and the main partition should be labeled =bros-main=.
+
+Create the subvolumes =@nix=, =@home=, =@tmp= and =@var_tmp= on the btrfs partition.
+
+Create =/mnt/boot= and =/mnt/nix=, and mount the correct partitions.
+#+begin_src shell
+sudo mkdir /mnt/boot /mnt/nix
+sudo mount /dev/disk/by-label/BROS_BOOT /mnt/boot
+sudo mount /dev/disk/by-label/bros-main -o subvol=@nix /mnt/nix
+#+end_src
+
+Create a local system confguration in =/mnt/nix/osconfig/default.nix=, here's a good base:
+
+#+begin_src nix
+{
+  config = {
+    brainrotos = {
+      desktop.plasma.v1.enable = true;
+      firefox.v1.enable = true;
+      user.v1.name = "user";
+    };
+
+    nixpkgs.hostPlatform = {system = "x86_64-linux";};
+    system.stateVersion = "25.11";
+  };
+}
+#+end_src
+
+After this you can proceed with the installation
+
+#+begin_src shell
+nixos-install --impure --no-root-password --no-channel-copy -I brainrotos=/mnt/nix/osconfig --flake github:thundertheidiot/brainrotos#base 
+#+end_src
+
+The default password of the user account is =password123=, this can be changed and the change is persisted.
