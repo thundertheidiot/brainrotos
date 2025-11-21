@@ -70,10 +70,18 @@ in {
         wantedBy = ["basic.target"];
       };
 
-      systemd.services."systemd-bless-boot" = {
+      systemd.services."brainrotos-bless-boot" = {
         enable = true;
         wantedBy = ["multi-user.target"];
-        requires = ["display-manager.service"];
+        requires = ["boot-complete.target" "display-manager.service"];
+        after = ["local-fs.target" "boot-complete.target" "display-manager.service"];
+
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+
+          ExecStart = "${pkgs.systemd}/lib/systemd/systemd-bless-boot good";
+        };
       };
     })
   ];
