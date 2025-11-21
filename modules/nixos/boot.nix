@@ -70,7 +70,10 @@ in {
         wantedBy = ["basic.target"];
       };
 
-      systemd.services."systemd-bless-boot".enable = false;
+      systemd.services."systemd-bless-boot" = {
+        enable = false;
+        wantedBy = lib.mkForce [];
+      };
       systemd.services."brainrotos-bless-boot" = {
         enable = true;
         wantedBy = ["multi-user.target"];
