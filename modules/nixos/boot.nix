@@ -1,6 +1,7 @@
 {
   lib,
   config,
+  pkgs,
   ...
 }: let
   inherit (lib) mkDefault mkIf mkMerge;
@@ -39,8 +40,11 @@ in {
       # full disclaimer, made with the help of gemini 3 pro
       boot.loader.systemd-boot.extraInstallCommands = let
         esp = config.boot.loader.efi.efiSysMountPoint;
+        # TODO maybe switch these
+        grep = "${pkgs.gnugrep}/bin/grep";
+        gawk = "${pkgs.gawk}/bin/awk";
       in ''
-        DEFAULT_ENTRY=$(grep "^default" ${esp}/loader/loader.conf | awk '{print $2}')
+        DEFAULT_ENTRY=$(${grep} "^default" ${esp}/loader/loader.conf | ${awk} '{print $2}')
 
         if [ -n "$DEFAULT_ENTRY" ] && [[ "$DEFAULT_ENTRY" != *"+"* ]]; then
           TRIES=2
