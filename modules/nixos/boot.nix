@@ -42,7 +42,7 @@ in {
         esp = config.boot.loader.efi.efiSysMountPoint;
         # TODO maybe switch these
         grep = "${pkgs.gnugrep}/bin/grep";
-        gawk = "${pkgs.gawk}/bin/awk";
+        awk = "${pkgs.gawk}/bin/awk";
       in ''
         DEFAULT_ENTRY=$(${grep} "^default" ${esp}/loader/loader.conf | ${awk} '{print $2}')
 
