@@ -4,7 +4,7 @@
   pkgs,
   ...
 }: let
-  inherit (lib) mkDefault mkIf mkMerge;
+  inherit (lib) mkDefault mkIf mkMerge getExe';
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
@@ -40,9 +40,11 @@ in {
       # full disclaimer, made with the help of gemini 3 pro
       boot.loader.systemd-boot.extraInstallCommands = let
         esp = config.boot.loader.efi.efiSysMountPoint;
-        # TODO maybe switch these
-        grep = "${pkgs.gnugrep}/bin/grep";
-        awk = "${pkgs.gawk}/bin/awk";
+        # consider switching these, busybox?
+        grep = getExe' pkgs.coreutils "grep";
+        awk = getExe' pkgs.coreutils "awk";
+        mv = getExe' pkgs.coreutils "mv";
+        sed = getExe' pkgs.coreutils "sed";
       in ''
         DEFAULT_ENTRY=$(${grep} "^default" ${esp}/loader/loader.conf | ${awk} '{print $2}')
 
@@ -52,10 +54,10 @@ in {
           NEW_ENTRY="''${DEFAULT_ENTRY%.conf}+$TRIES.conf"
 
           if [ -f "${esp}/loader/entries/$DEFAULT_ENTRY" ]; then
-            mv "${esp}/loader/entries/$DEFAULT_ENTRY" "${esp}/loader/entries/$NEW_ENTRY"
+            ${mv} "${esp}/loader/entries/$DEFAULT_ENTRY" "${esp}/loader/entries/$NEW_ENTRY"
 
             # Update loader.conf to point to the new filename
-            sed -i "s/$DEFAULT_ENTRY/$NEW_ENTRY/" "${esp}/loader/loader.conf"
+            ${sed} -i "s/$DEFAULT_ENTRY/$NEW_ENTRY/" "${esp}/loader/loader.conf"
 
             echo "Boot counting enabled: Renamed $DEFAULT_ENTRY to $NEW_ENTRY"
           fi
