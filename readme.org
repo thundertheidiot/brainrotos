@@ -1,3 +1,7 @@
+* failing branch
+
+do not install this, it is to test boot counting, this **should** fail to boot
+
 * BrainrotOS
 
 Work in progress proof of concept for a user friendly "immutable" distribution like Bazzite, but based on NixOS. 
