@@ -11,6 +11,6 @@ in {
       flatpak.v1.enable = mkDefault true;
     };
 
-    systemd.services.display-manager.serviceConfig.ExecStart = lib.mkForce "/run/current-system/sw/bin/false";
+    # systemd.services.display-manager.serviceConfig.ExecStart = lib.mkForce "/run/current-system/sw/bin/false";
   };
 }
