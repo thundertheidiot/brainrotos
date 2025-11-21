@@ -53,3 +53,9 @@ nixos-install --impure --no-root-password --no-channel-copy -I brainrotos=/mnt/n
 #+end_src
 
 The default password of the user account is =password123=, this can be changed and the change is persisted.
+
+* TODOs
+
+- [ ] TODO automatic rollback
+  - [ ] boot validation
+  - [ ] boot counting
