@@ -10,7 +10,5 @@ in {
       ramcache.v1.enable = mkDefault true;
       flatpak.v1.enable = mkDefault true;
     };
-
-    systemd.services.display-manager.serviceConfig.ExecStart = lib.mkForce "false";
   };
 }
