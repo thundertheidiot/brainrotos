@@ -40,11 +40,11 @@ in {
       # full disclaimer, made with the help of gemini 3 pro
       boot.loader.systemd-boot.extraInstallCommands = let
         esp = config.boot.loader.efi.efiSysMountPoint;
-        # consider switching these, busybox?
-        grep = getExe' pkgs.coreutils "grep";
-        awk = getExe' pkgs.coreutils "awk";
-        mv = getExe' pkgs.coreutils "mv";
-        sed = getExe' pkgs.coreutils "sed";
+        # consider switching these
+        grep = getExe' pkgs.busybox "grep";
+        awk = getExe' pkgs.busybox "awk";
+        mv = getExe' pkgs.busybox "mv";
+        sed = getExe' pkgs.busybox "sed";
       in ''
         DEFAULT_ENTRY=$(${grep} "^default" ${esp}/loader/loader.conf | ${awk} '{print $2}')
 
