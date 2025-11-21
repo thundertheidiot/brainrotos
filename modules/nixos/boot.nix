@@ -55,6 +55,7 @@ in {
 
             echo "Boot counting enabled: Renamed $DEFAULT_ENTRY to $NEW_ENTRY"
           fi
+        fi
       '';
 
       # https://blog.printk.io/2020/02/systemd-boot-counting-and-boot-complete-target/
