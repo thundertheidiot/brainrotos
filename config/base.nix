@@ -6,7 +6,8 @@ in {
   config = {
     brainrotos = {
       impermanence.v1.enable = mkDefault true;
-      efi.v1.enable = mkDefault true;
+      boot.v1.enable = mkDefault true;
+      boot.v1.efi = mkDefault true;
       ramcache.v1.enable = mkDefault true;
       flatpak.v1.enable = mkDefault true;
     };
