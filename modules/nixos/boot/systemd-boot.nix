@@ -24,19 +24,19 @@ in {
 
           json=$(bootctl list --json=short)
 
-          new_id=$(echo "$json" | jq -r '.[0].id')
-          previous_id=$(echo "$json" | jq -r '.[1].id')
+          new=$(echo "$json" | jq -r '.[0].id')
+          default=$(bootctl list --json=short | jq 'first(.[] | select(.isDefault)).id')
 
           # previous id won't exist on a fresh install
-          if [ "$previous_id" != "null" ] && [ -n "$previous_id" ]; then
+          if [ "$default" != "null" ] && [ -n "$default" ]; then
             echo "  Boot validation in effect"
-            echo "  New generation: $new_id"
-            echo "  Old generation: $previous_id"
+            echo "  New generation: $new"
+            echo "  Old generation: $default"
 
             # default to old one
-            bootctl set-default "$previous_id"
+            bootctl set-default "$default"
             # boot new one once
-            bootctl set-oneshot "$new_id"
+            bootctl set-oneshot "$new"
           else
             echo "  No previous generation detected. Defaulting to new generation."
           fi
