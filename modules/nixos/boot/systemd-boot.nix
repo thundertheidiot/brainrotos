@@ -27,8 +27,8 @@ in {
           new_id=$(echo "$json" | jq -r '.[0].id')
           previous_id=$(echo "$json" | jq -r '.[1].id')
 
-          # stable id won't exist on a fresh install
-          if [ "$stable_id" != "null" ] && [ -n "$stable_id" ]; then
+          # previous id won't exist on a fresh install
+          if [ "$previous_id" != "null" ] && [ -n "$previous_id" ]; then
             echo "  Boot validation in effect"
             echo "  New generation: $new_id"
             echo "  Old generation: $previous_id"
