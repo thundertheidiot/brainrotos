@@ -4,7 +4,8 @@
     brainrotos = {
       desktop.plasma.v1.enable = true;
       impermanence.v1.enable = true;
-      efi.v1.enable = true;
+      boot.v1.enable = true;
+      boot.v1.efi = true;
       ramcache.v1.enable = true;
       firefox.v1.enable = true;
       flatpak.v1.enable = true;
