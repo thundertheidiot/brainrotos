@@ -45,11 +45,11 @@ in {
       boot.loader.efi.efiSysMountPoint = mkDefault "/boot";
     })
     (mkIf (cfg.enable) {
-      systemd.services.brainrotos-validate-boot = rec {
+      systemd.services.brainrotos-validate-boot = {
         enable = true;
-        description = "Validate system health and bless the newly booted configuration";
+        description = "Boot Validation";
 
-        requires = ["display-manager.service" "local-fs.target"];
+        requisite = ["display-manager.service" "local-fs.target"];
         after = ["display-manger.service" "local-fs.target"];
 
         wantedBy = ["multi-user.target"];
