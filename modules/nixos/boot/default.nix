@@ -57,7 +57,7 @@ in {
         serviceConfig = {
           Type = "oneshot";
           User = "root";
-          ExecStartPre = map (target: "${getExe' pkgs.systemd "systemctl"} is-active --quiet ${target}") requires;
+          ExecStartPre = "${getExe' pkgs.coreutils "sleep"} 30";
         };
       };
     })
