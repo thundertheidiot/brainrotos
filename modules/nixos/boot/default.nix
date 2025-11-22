@@ -57,7 +57,6 @@ in {
         serviceConfig = {
           Type = "oneshot";
           User = "root";
-          ExecStartPre = "${getExe' pkgs.coreutils "sleep"} 30";
         };
       };
     })
