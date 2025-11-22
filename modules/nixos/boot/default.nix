@@ -57,6 +57,7 @@ in {
         serviceConfig = {
           Type = "oneshot";
           User = "root";
+          ExecStartPre = "sleep 30";
         };
       };
     })
