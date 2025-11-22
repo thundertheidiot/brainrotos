@@ -25,7 +25,7 @@ in {
           json=$(bootctl list --json=short)
 
           new=$(echo "$json" | jq -r '.[0].id')
-          default=$(bootctl list --json=short | jq 'first(.[] | select(.isDefault)).id')
+          default=$(bootctl list --json=short | jq 'first(.[] | select(.isSelected)).id')
 
           # previous id won't exist on a fresh install
           if [ "$default" != "null" ] && [ -n "$default" ]; then
