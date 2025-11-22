@@ -57,20 +57,6 @@ in {
         serviceConfig = {
           Type = "oneshot";
           User = "root";
-          ExecStartPre =
-            map (
-              # give some time for the units to start up
-              target:
-                pkgs.writeShellScript "test-${target}" ''
-                  for i in 1 2 3 4 5; do
-                      ${getExe' pkgs.systemd "systemctl"} is-active --quiet ${target} && exit 0
-                      sleep 1
-                  done
-                  echo "${target} is not active"
-                  exit 1
-                ''
-            )
-            after;
         };
       };
     })
