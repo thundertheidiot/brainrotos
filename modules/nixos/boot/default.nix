@@ -1,9 +1,10 @@
 {
   lib,
   config,
+  pkgs,
   ...
 }: let
-  inherit (lib) mkDefault mkIf mkMerge;
+  inherit (lib) mkDefault mkIf mkMerge getExe';
   inherit (lib.options) mkOption;
   inherit (lib.types) bool enum;
 
@@ -44,7 +45,7 @@ in {
       boot.loader.efi.efiSysMountPoint = mkDefault "/boot";
     })
     (mkIf (cfg.enable) {
-      systemd.services.brainrotos-validate-boot = {
+      systemd.services.brainrotos-validate-boot = rec {
         enable = true;
         description = "Validate system health and bless the newly booted configuration";
 
@@ -56,6 +57,7 @@ in {
         serviceConfig = {
           Type = "oneshot";
           User = "root";
+          ExecStartPre = map (target: "${getExe' pkgs.systemd "systemctl"} is-active --quiet ${target}") requires;
         };
       };
     })
