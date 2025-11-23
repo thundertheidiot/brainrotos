@@ -49,7 +49,7 @@ in {
         enable = true;
         description = "Boot Validation";
 
-        requisite = ["display-manager.service" "local-fs.target"];
+        bindsTo = ["display-manager.service" "local-fs.target"];
         after = ["display-manger.service" "local-fs.target"];
 
         wantedBy = ["multi-user.target"];
