@@ -28,6 +28,7 @@ in {
       isNormalUser = true;
       extraGroups = ["wheel"];
       initialPassword = mkDefault "password123";
+      uid = 1000;
     };
 
     systemd.settings.Manager = {

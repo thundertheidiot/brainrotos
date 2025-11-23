@@ -52,12 +52,11 @@ in {
         bindsTo = ["display-manager.service" "local-fs.target"];
         after = ["display-manger.service" "local-fs.target"];
 
-        wantedBy = ["multi-user.target"];
+        wantedBy = ["user@${config.users.users."${config.brainrotos.user.v1.name}".uid}.target"];
 
         serviceConfig = {
           Type = "oneshot";
           User = "root";
-          # ExecStartPre = "${getExe' pkgs.coreutils "sleep"} 30";
         };
       };
     })
