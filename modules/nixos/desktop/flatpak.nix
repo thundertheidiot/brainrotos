@@ -24,6 +24,12 @@ in {
     (mkIf cfg.enable {
       services.flatpak.enable = true;
 
+      # why isn't this the default?
+      systemd.services."flatpak-managed-install" = {
+        after = ["network-online.target"];
+        wants = ["network-online.target"];
+      };
+
       brainrotos.impermanence.v1.directories = [
         {
           path = "/var/lib/flatpak";
@@ -40,6 +46,12 @@ in {
       services.flatpak.packages = [
         "io.github.kolunmi.Bazaar"
       ];
+
+      services.flatpak.overrides."io.github.kolunmi.Bazaar" = {
+        Context.filesystems = [
+          "host-os:ro" # expose bazaar configs
+        ];
+      };
 
       environment.etc."bazaar/bazaar.yaml".source = (pkgs.formats.yaml {}).generate "bazaar.yaml" {
         txt-blocklist-paths = [
