@@ -29,6 +29,7 @@
         modules = [
           "${inputs.self.outPath}/modules/nixos"
           "${inputs.self.outPath}/config/${n}"
+          inputs.nix-flatpak.nixosModules.nix-flatpak
         ];
       };
     }) (readDir "${inputs.self.outPath}/config");
