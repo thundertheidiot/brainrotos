@@ -2,7 +2,7 @@
   # doesn't import local config
   config = {
     brainrotos = {
-      desktop.plasma.v1.enable = true;
+      desktop.gnome.v1.enable = true;
       impermanence.v1.enable = true;
       efi.v1.enable = true;
       ramcache.v1.enable = true;
