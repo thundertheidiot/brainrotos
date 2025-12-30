@@ -30,7 +30,6 @@ in {
       # firefox is the preferred web browser, bazaar is used as the flatpak app store
       environment.gnome.excludePackages = [pkgs.epiphany pkgs.gnome-software pkgs.geary pkgs.yelp];
       services.gnome.gnome-software.enable = mkForce false;
-      services.gnome.geary.enable = mkForce false;
     })
     (mkIf cfg.enable {
       # impermanence
