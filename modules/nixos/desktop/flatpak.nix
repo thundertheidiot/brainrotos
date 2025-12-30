@@ -73,18 +73,17 @@ in {
     })
     # bazaar service
     (mkIf cfg.enable {
-      systemd.user.services."bazaar-service" = {
-        description = "Bazaar Service";
+      systemd.user.services."bazaar" = {
+        description = "Bazaar Background Service";
 
-        after = ["graphical.target" "flatpak-managed-install.service"];
-        wantedBy = ["graphical.target"];
+        after = ["graphical-session.target" "flatpak-managed-install.service"];
+        wantedBy = ["graphical-session.target"];
+        partOf = ["graphical-session.target"];
 
-        path = [pkgs.flatpak];
+        unitConfig.ConditionUser = config.brainrotos.user.v1.name;
 
         serviceConfig = {
-          Type = "simple";
-          ConditionUser = config.brainrotos.user.v1.name;
-          ExecStart = "flatpak run io.github.kolunmi.Bazaar --no-window";
+          ExecStart = "${getExe' pkgs.flatpak "flatpak"} run io.github.kolunmi.Bazaar --no-window";
         };
       };
     })
