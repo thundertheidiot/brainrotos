@@ -86,7 +86,7 @@ in {
             ++ optional config.brainrotos.desktop.gnome.v1.enable [
               "systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${
                 pkgs.writeShellApplication {
-                  name = "enable-bazaar-search-plugin";
+                  name = "enable-bazaar-search-provider";
                   runtimeInputs = [
                     pkgs.glib
                     pkgs.gnugrep
@@ -99,7 +99,7 @@ in {
                     fi
                   '';
                 }
-              }"
+              }/bin/enable-bazaar-search-provider"
             ];
         };
       };
