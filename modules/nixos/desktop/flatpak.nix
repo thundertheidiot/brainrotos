@@ -42,6 +42,7 @@ in {
         "R! /var/tmp/flatpak-cache-* - - - 10d"
       ];
     })
+    # bazaar flatpak store
     (mkIf cfg.enable {
       services.flatpak.packages = [
         "io.github.kolunmi.Bazaar"
@@ -49,7 +50,8 @@ in {
 
       services.flatpak.overrides."io.github.kolunmi.Bazaar" = {
         Context.filesystems = [
-          "host-os:ro" # expose bazaar configs
+          "host-etc:ro" # expose bazaar configs
+          "/nix/store:ro"
         ];
       };
 
