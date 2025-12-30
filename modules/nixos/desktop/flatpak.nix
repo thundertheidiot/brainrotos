@@ -51,20 +51,20 @@ in {
       services.flatpak.overrides."io.github.kolunmi.Bazaar" = {
         Context.filesystems = [
           "host-etc:ro" # expose bazaar configs
-          "/etc/static:ro"
-          "/nix/store:ro"
         ];
       };
 
-      environment.etc."bazaar/bazaar.yaml".source = (pkgs.formats.yaml {}).generate "bazaar.yaml" {
-        txt-blocklist-paths = [
-          "/run/host/etc/bazaar/blocklist.txt"
-        ];
-      };
-
-      environment.etc."bazaar/blocklist.txt".text = ''
-        com.valvesoftware.Steam
-      '';
+      systemd.tmpfiles.rules = [
+        "d /etc/bazaar 0755 root root - -"
+        "C /etc/bazaar/bazaar.yaml - - - - ${(pkgs.formats.yaml {}).generate "bazaar.yaml" {
+          txt-blocklist-paths = [
+            "/run/host/etc/bazaar/blocklist.txt"
+          ];
+        }}"
+        "C /etc/bazaar/blocklist.txt - - - - ${pkgs.writeText "blocklist.txt" ''
+          com.valvesoftware.Steam
+        ''}"
+      ];
     })
     (mkIf (cfg.enable && config.brainrotos.desktop.plasma.v1.enable) {
       environment.systemPackages = [
