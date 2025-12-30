@@ -69,6 +69,14 @@ in {
           com.valvesoftware.Steam
         ''}"
       ];
+
+      programs.dconf.profiles.user.databases = [
+        {
+          settings."org/gnome/desktop/search-providers" = {
+            enabled = "io.github.kolunmi.Bazaar.desktop";
+          };
+        }
+      ];
     })
     (mkIf (cfg.enable && config.brainrotos.desktop.plasma.v1.enable) {
       environment.systemPackages = [
