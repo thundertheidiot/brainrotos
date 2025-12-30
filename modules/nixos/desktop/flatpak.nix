@@ -78,7 +78,7 @@ in {
           ExecStartPost = pkgs.writeShellScript "flatpak-post" (let
             notify-send = getExe' pkgs.libnotify "notify-send";
           in ''
-            systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${notify-send "ligma balls"}
+            systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${notify-send} "ligma balls"
           '');
         };
       };
