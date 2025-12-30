@@ -42,10 +42,11 @@ in {
         "R! /var/tmp/flatpak-cache-* - - - 10d"
       ];
     })
-    # bazaar flatpak store
+    # default flatpaks
     (mkIf cfg.enable {
       services.flatpak.packages = [
         "io.github.kolunmi.Bazaar"
+        "com.github.tchx84.Flatseal"
       ];
 
       services.flatpak.overrides."io.github.kolunmi.Bazaar" = {
@@ -54,6 +55,9 @@ in {
         ];
       };
 
+      # environment.etc won't work here, because it actually links stuff into /etc/static
+      # and we cannot pass directories in /etc to the flatpak
+      # using C here avoids having to mount /nix/store for the symlinks
       systemd.tmpfiles.rules = [
         "d /etc/bazaar 0755 root root - -"
         "C /etc/bazaar/bazaar.yaml - - - - ${(pkgs.formats.yaml {}).generate "bazaar.yaml" {
