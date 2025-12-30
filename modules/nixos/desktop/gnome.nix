@@ -30,6 +30,27 @@ in {
       environment.gnome.excludePackages = [pkgs.epiphany pkgs.gnome-software pkgs.geary pkgs.yelp];
       services.gnome.gnome-software.enable = mkForce false;
     })
+    # enable the bazaar search provider after flatpak installation has completed
+    (mkIf config.brainrotos.flatpak.v1.enable {
+      systemd.services."flatpak-managed-install".serviceConfig.ExecStartPost = [
+        "systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${
+          pkgs.writeShellApplication {
+            name = "enable-bazaar-search-provider";
+            runtimeInputs = [
+              pkgs.glib
+              pkgs.gnugrep
+              pkgs.gnused
+            ];
+            text = ''
+              if ! gsettings get org.gnome.desktop.search-providers enabled | grep "io.github.kolunmi.Bazaar.desktop" -q; then
+                OLD="$(gsettings get org.gnome.desktop.search-providers enabled)"
+                gsettings set org.gnome.desktop.search-providers enabled "''${OLD//\]/, \'io.github.kolunmi.Bazaar.desktop\']}"
+              fi
+            '';
+          }
+        }/bin/enable-bazaar-search-provider"
+      ];
+    })
     (mkIf cfg.enable {
       services.displayManager.gdm.enable = true;
 
