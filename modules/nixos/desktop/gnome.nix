@@ -4,7 +4,7 @@
   pkgs,
   ...
 }: let
-  inherit (lib) mkIf mkMerge;
+  inherit (lib) mkIf mkMerge mkForce;
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
@@ -26,8 +26,21 @@ in {
       services.displayManager.gdm.enable = true;
       services.gnome.games.enable = false;
       services.gnome.core-developer-tools.enable = false;
+
+      # firefox is the preferred web browser, bazaar is used as the flatpak app store
+      environment.gnome.excludePackages = [pkgs.epiphany pkgs.gnome-software pkgs.geary pkgs.yelp];
+      services.gnome.gnome-software.enable = mkForce false;
+      services.gnome.geary.enable = mkForce false;
     })
     (mkIf cfg.enable {
+      # impermanence
+      brainrotos.impermanence.v1.directories = [
+        {
+          path = "/var/lib/gdm";
+          permissions = "755";
+        }
+      ];
+
       # cache components to ram on boot
       brainrotos.ramcache.v1.paths = with pkgs; [
         nautilus
