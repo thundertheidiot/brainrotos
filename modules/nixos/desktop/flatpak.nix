@@ -82,10 +82,9 @@ in {
         unitConfig.ConditionUser = config.brainrotos.user.v1.name;
 
         serviceConfig = {
-          ExecStartPre = ''
-            ${getExe pkgs.bash} -c "until ! systemctl --system is-active flatpak-managed-install.service; do sleep 1; done"
-          '';
           ExecStart = "${getExe' pkgs.flatpak "flatpak"} run io.github.kolunmi.Bazaar --no-window";
+          Restart = "on-failure";
+          RestartSec = "5s";
         };
       };
     })
