@@ -44,7 +44,13 @@ in {
             text = ''
               if ! gsettings get org.gnome.desktop.search-providers enabled | grep "io.github.kolunmi.Bazaar.desktop" -q; then
                 OLD="$(gsettings get org.gnome.desktop.search-providers enabled)"
-                gsettings set org.gnome.desktop.search-providers enabled "''${OLD//\]/, \'io.github.kolunmi.Bazaar.desktop\']}"
+                if echo "$OLD" | grep "@as \[\]" -q; then
+                  # list is empty
+                  gsettings set org.gnome.desktop.search-providers enabled "['io.github.kolunmi.Bazaar.desktop']"
+                else
+                  # otherwise append
+                  gsettings set org.gnome.desktop.search-providers enabled "''${OLD//\]/, \'io.github.kolunmi.Bazaar.desktop\']}"
+                fi
               fi
             '';
           }
