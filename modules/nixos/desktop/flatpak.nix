@@ -51,6 +51,7 @@ in {
       services.flatpak.overrides."io.github.kolunmi.Bazaar" = {
         Context.filesystems = [
           "host-etc:ro" # expose bazaar configs
+          "/etc/static:ro"
           "/nix/store:ro"
         ];
       };
