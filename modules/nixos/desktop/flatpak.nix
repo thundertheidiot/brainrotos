@@ -95,20 +95,12 @@ in {
           notify-send = getExe' pkgs.libnotify "notify-send";
           srun = "systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user";
         in {
-          ExecStartPre = [
-            (pkgs.writeShellScript "flatpak-post-notification" (let
-            in ''
-              if [ ! -f "${markerFile}" ]; then
-                 ${srun} ${notify-send} -u normal -a "Setting things up" "Installing essential applications. This may take a few minutes."
-              fi
-            ''))
-          ];
           ExecStartPost = [
             (pkgs.writeShellScript "flatpak-post-notification" (let
               notify-send = getExe' pkgs.libnotify "notify-send";
             in ''
               if [ ! -f "${markerFile}" ]; then
-                ${srun} ${notify-send} -u normal -a "All set 🎉" "Your system is ready to use."
+                ${srun} ${notify-send} -u normal -a "All set 🎉" "Everything has been installed, your system is ready to use!"
               fi
 
               # this should never be a problem
