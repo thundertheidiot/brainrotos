@@ -29,6 +29,9 @@ in {
       systemd.services."flatpak-managed-install" = {
         after = ["network-online.target"];
         wants = ["network-online.target"];
+
+        # this is for the bazaar service below
+        serviceConfig.RemainAfterExit = true;
       };
 
       brainrotos.impermanence.v1.directories = [
@@ -76,7 +79,8 @@ in {
       systemd.user.services."bazaar" = {
         description = "Bazaar Background Service";
 
-        after = ["graphical-session.target" "flatpak-managed-install.service"];
+        after = ["graphical-session.target"];
+        requires = ["flatpak-managed-install.service"];
         wantedBy = ["graphical-session.target"];
         partOf = ["graphical-session.target"];
 
