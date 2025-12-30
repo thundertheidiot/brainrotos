@@ -6,6 +6,7 @@
 }: let
   inherit (lib) mkIf mkMerge;
   inherit (lib.options) mkOption;
+  inherit (lib.lists) optional;
   inherit (lib.types) bool;
 
   cfg = config.brainrotos.flatpak.v1;
@@ -69,14 +70,58 @@ in {
           com.valvesoftware.Steam
         ''}"
       ];
+    })
+    # notifier
+    (mkIf cfg.enable {
+      systemd.user.services.brainrotos-flatpak-install-monitor = {
+        description = "Monitor Flatpak Managed Install Status";
+        wantedBy = ["graphical-session.target"];
+        partOf = ["graphical-session.target"];
 
-      programs.dconf.profiles.user.databases = [
-        {
-          settings."org/gnome/desktop/search-providers" = {
-            enabled = "io.github.kolunmi.Bazaar.desktop";
-          };
-        }
-      ];
+        path =
+          [pkgs.libnotify]
+          ++ optional config.brainrotos.desktop.gnome.v1.enable pkgs.gnome-console
+          ++ optional config.brainrotos.desktop.plasma.v1.enable pkgs.kdePackages.konsole;
+        script = let
+          ifGnome = t:
+            if config.brainrotos.desktop.gnome.v1.enable
+            then t
+            else "";
+          ifPlasma = t:
+            if config.brainrotos.desktop.plasma.v1.enable
+            then t
+            else "";
+        in ''
+          MARKER_FILE="$HOME/.local/state/flatpak-setup-done"
+          SERVICE_NAME="flatpak-managed-install.service"
+
+          if [ -f "$MARKER_FILE" ]; then
+            exit 0
+          fi
+
+          if systemctl --system is-active --quiet "$SERVICE_NAME"; then
+            if [ "$(notify-send -u critical -a "First Setup" --action=follow="Watch Log" "Important packages are still being installed, please wait..." -w)" = "follow" ]; then
+              ${ifGnome "kgx --"}${ifPlasma "konsole -e"} journalctl -fu "$SERVICE_NAME"
+            fi
+
+            while systemctl --system is-active --quiet "$SERVICE_NAME"; do
+              sleep 5
+            done
+
+            notify-send -u normal -a "First Setup" "Package installation completed!"
+
+            ${ifGnome "gsettings set org.gnome.desktop.search-providers enabled \"['io.github.kolunmi.Bazaar.desktop']\""}
+          fi
+
+          mkdir --parents "$(dirname $MARKER_FILE)"
+          touch "$MARKER_FILE"
+        '';
+
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = false;
+        };
+      };
     })
     (mkIf (cfg.enable && config.brainrotos.desktop.plasma.v1.enable) {
       environment.systemPackages = [
