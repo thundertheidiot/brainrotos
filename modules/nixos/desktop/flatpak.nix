@@ -75,11 +75,32 @@ in {
     (mkIf cfg.enable {
       systemd.services."flatpak-managed-install" = {
         serviceConfig = {
-          ExecStartPost = pkgs.writeShellScript "flatpak-post" (let
-            notify-send = getExe' pkgs.libnotify "notify-send";
-          in ''
-            systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${notify-send} "ligma balls"
-          '');
+          ExecStartPost =
+            [
+              # (pkgs.writeShellScript "flatpak-post" (let
+              #   notify-send = getExe' pkgs.libnotify "notify-send";
+              # in ''
+              #   systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${notify-send
+              # ''))
+            ]
+            ++ optional config.brainrotos.desktop.gnome.v1.enable [
+              "systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${
+                pkgs.writeShellApplication {
+                  name = "enable-bazaar-search-plugin";
+                  runtimeInputs = [
+                    pkgs.glib
+                    pkgs.gnugrep
+                    pkgs.gnused
+                  ];
+                  text = ''
+                    if ! gsettings get org.gnome.desktop.search-providers enabled | grep "io.github.kolunmi.Bazaar.desktop" -q; then
+                      OLD="$(gsettings get org.gnome.desktop.search-providers enabled)"
+                      gsettings set org.gnome.desktop.search-providers enabled "''${OLD//\]/, \'io.github.kolunmi.Bazaar.desktop\']}"
+                    fi
+                  '';
+                }
+              }"
+            ];
         };
       };
     })
