@@ -23,7 +23,6 @@ in {
   config = mkMerge [
     (mkIf cfg.enable {
       services.desktopManager.gnome.enable = true;
-      services.displayManager.gdm.enable = true;
       services.gnome.games.enable = false;
       services.gnome.core-developer-tools.enable = false;
 
@@ -31,15 +30,53 @@ in {
       environment.gnome.excludePackages = [pkgs.epiphany pkgs.gnome-software pkgs.geary pkgs.yelp];
       services.gnome.gnome-software.enable = mkForce false;
     })
+    # enable the bazaar search provider after flatpak installation has completed
+    (mkIf config.brainrotos.flatpak.v1.enable {
+      systemd.services."flatpak-managed-install".serviceConfig.ExecStartPost = [
+        "systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user ${
+          pkgs.writeShellApplication {
+            name = "enable-bazaar-search-provider";
+            runtimeInputs = [
+              pkgs.glib
+              pkgs.gnugrep
+              pkgs.gnused
+            ];
+            text = ''
+              if ! gsettings get org.gnome.desktop.search-providers enabled | grep "io.github.kolunmi.Bazaar.desktop" -q; then
+                OLD="$(gsettings get org.gnome.desktop.search-providers enabled)"
+                if echo "$OLD" | grep "@as \[\]" -q; then
+                  # list is empty
+                  gsettings set org.gnome.desktop.search-providers enabled "['io.github.kolunmi.Bazaar.desktop']"
+                else
+                  # otherwise append
+                  gsettings set org.gnome.desktop.search-providers enabled "''${OLD//\]/, \'io.github.kolunmi.Bazaar.desktop\']}"
+                fi
+              fi
+            '';
+          }
+        }/bin/enable-bazaar-search-provider"
+      ];
+    })
     (mkIf cfg.enable {
-      # impermanence
+      services.displayManager.gdm.enable = true;
+
+      systemd.services."display-manager".serviceConfig = {
+        # - here should ignore failure, which will happpen on first boot
+        ExecStartPre = "-${pkgs.writeShellScript "gdm-copy-monitor-config" ''
+          mkdir --parents /etc/xdg
+          cp "${config.users.users."${config.brainrotos.user.v1.name}".home}/.config/monitors.xml" /etc/xdg/monitors.xml
+        ''}";
+      };
+
+      # gdm persistence
       brainrotos.impermanence.v1.directories = [
         {
           path = "/var/lib/gdm";
           permissions = "755";
         }
       ];
-
+    })
+    (mkIf cfg.enable {
       # cache components to ram on boot
       brainrotos.ramcache.v1.paths = with pkgs; [
         nautilus

@@ -4,7 +4,7 @@
   pkgs,
   ...
 }: let
-  inherit (lib) mkIf mkMerge;
+  inherit (lib) mkIf mkMerge getExe getExe';
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
@@ -69,6 +69,48 @@ in {
           com.valvesoftware.Steam
         ''}"
       ];
+    })
+    # bazaar service
+    (mkIf cfg.enable {
+      systemd.user.services."bazaar" = {
+        description = "Bazaar Background Service";
+
+        after = ["graphical-session.target"];
+        wantedBy = ["graphical-session.target"];
+        partOf = ["graphical-session.target"];
+
+        unitConfig.ConditionUser = config.brainrotos.user.v1.name;
+
+        serviceConfig = {
+          ExecStart = "${getExe' pkgs.flatpak "flatpak"} run io.github.kolunmi.Bazaar --no-window";
+          Restart = "on-failure";
+          RestartSec = "5s";
+        };
+      };
+    })
+    # notifier
+    (mkIf cfg.enable {
+      systemd.services."flatpak-managed-install" = {
+        serviceConfig = let
+          markerFile = "${config.brainrotos.impermanence.v1.persist}/flatpak-first-installation-complete.flag";
+          notify-send = getExe' pkgs.libnotify "notify-send";
+          srun = "systemd-run --machine=${config.brainrotos.user.v1.name}@.host --user";
+        in {
+          ExecStartPost = [
+            (pkgs.writeShellScript "flatpak-post-notification" (let
+              notify-send = getExe' pkgs.libnotify "notify-send";
+            in ''
+              if [ ! -f "${markerFile}" ]; then
+                ${srun} ${notify-send} -u normal -a "All set 🎉" "Everything has been installed, your system is ready to use!"
+              fi
+
+              # this should never be a problem
+              mkdir --parents "$(dirname ${markerFile})"
+              touch "${markerFile}"
+            ''))
+          ];
+        };
+      };
     })
     (mkIf (cfg.enable && config.brainrotos.desktop.plasma.v1.enable) {
       environment.systemPackages = [
