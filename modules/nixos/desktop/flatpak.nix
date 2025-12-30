@@ -29,9 +29,6 @@ in {
       systemd.services."flatpak-managed-install" = {
         after = ["network-online.target"];
         wants = ["network-online.target"];
-
-        # this is for the bazaar service below
-        serviceConfig.RemainAfterExit = true;
       };
 
       brainrotos.impermanence.v1.directories = [
@@ -80,13 +77,13 @@ in {
         description = "Bazaar Background Service";
 
         after = ["graphical-session.target"];
-        requires = ["flatpak-managed-install.service"];
         wantedBy = ["graphical-session.target"];
         partOf = ["graphical-session.target"];
 
         unitConfig.ConditionUser = config.brainrotos.user.v1.name;
 
         serviceConfig = {
+          # ExecStartPre = "";
           ExecStart = "${getExe' pkgs.flatpak "flatpak"} run io.github.kolunmi.Bazaar --no-window";
         };
       };
