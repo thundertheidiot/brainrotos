@@ -203,13 +203,9 @@ in {
         description = "Persist /etc/shadow on shutdown.";
         wantedBy = ["sysinit.target"];
         before = ["systemd-sysusers.service"];
-
-        unitConfig = {
-          RequiresMountsFor = ["${cfg.persist}"];
-        };
-
-        path = [pkgs.util-linux];
+        unitConfig.RequiresMountsFor = ["${cfg.persist}"];
         unitConfig.defaultDependencies = true;
+        path = [pkgs.util-linux];
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
