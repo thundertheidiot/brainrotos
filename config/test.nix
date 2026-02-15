@@ -8,6 +8,7 @@
       ramcache.v1.enable = true;
       firefox.v1.enable = true;
       flatpak.v1.enable = true;
+      gpu.v1.type = "intel";
     };
 
     nixpkgs.hostPlatform = {system = "x86_64-linux";};
