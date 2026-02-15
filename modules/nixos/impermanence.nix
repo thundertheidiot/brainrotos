@@ -122,7 +122,8 @@ in {
         ])
       cfg.directories);
     })
-    # Create and mount directories
+
+    # Create and mount files
     (mkIf cfg.enable {
       boot.postBootCommands =
         concatStringsSep " "
