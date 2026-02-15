@@ -181,23 +181,6 @@ in {
     (mkIf cfg.enable (let
       pShadow = "${cfg.persist}/rootfs/etc/shadow";
     in {
-      # system.activationScripts = {
-      #   # The first copy accounts for reactivation after startup, this example scenario should explain that
-      #   # 1. User starts up their computer
-      #   # 2. ${pShadow} is copied over /etc/shadow
-      #   # 3. User changes their password
-      #   # 4. User updates their system, reactivating the configuration
-      #   # 5. The old unchanged ${pShadow} is copied over /etc/shadow
-      #   # 6. User is very confused, as their password has changed back
-      #   etc_shadow = ''
-      #     mkdir --parents "${cfg.persist}/rootfs/etc"
-      #     [ -f "/etc/shadow" ] && cp /etc/shadow ${pShadow}
-      #     [ -f "${pShadow}" ] && cp ${pShadow} /etc/shadow
-      #   '';
-
-      #   users.deps = ["etc_shadow"];
-      # };
-
       systemd.services."etc_shadow_persistence" = {
         enable = true;
         description = "Persist /etc/shadow on shutdown.";
