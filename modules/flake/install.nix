@@ -1,10 +1,24 @@
-{inputs, ...}: {
-  perSystem = {pkgs, ...}: {
-    packages.test = pkgs.writers.writeBashBin "test" ''
-      echo hi
+{
+  inputs,
+  lib,
+  ...
+}: let
+  inherit (lib) getExe;
+in {
+  perSystem = {pkgs, ...}: rec {
+    packages.vm-setup = pkgs.writers.writeBashBin "vm-setup" ''
+      set -e
+
+      if [ "$EUID" -ne 0 ]; then
+        echo "Please run as root (use sudo)"
+        exit 1
+      fi
+
+      ${getExe packages.vm-disk-setup}
+      ${getExe packages.quick-install}
     '';
 
-    packages.setup-disks = pkgs.writers.writeBashBin "setup-disks" ''
+    packages.vm-disk-setup = pkgs.writers.writeBashBin "vm-disk-setup" ''
       set -e
 
       DISK="''${1:-/dev/vda}"
