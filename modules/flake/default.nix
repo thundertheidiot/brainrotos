@@ -8,6 +8,10 @@
     "x86_64-linux"
   ];
 
+  imports = [
+    ./install.nix
+  ];
+
   flake.nixosConfigurations = let
     inherit (builtins) readDir;
     inherit (lib.strings) removeSuffix;
