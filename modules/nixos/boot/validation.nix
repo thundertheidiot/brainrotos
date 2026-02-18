@@ -1,5 +1,6 @@
 {
   config,
+  pkgs,
   lib,
   ...
 }: let
@@ -19,8 +20,8 @@ in {
 
   config = mkMerge [
     (mkIf (cfg.enable) {
-      systemd.services.reactivation-test = {
-        description = "test reactivation service";
+      systemd.services.brainrotos-boot-validation-new-generation = {
+        description = "Mark new generation as untrusted";
         requiredBy = ["sysinit-reactivation.target"];
         before = ["sysinit-reactivation.target"];
 
@@ -38,6 +39,29 @@ in {
         '';
 
         restartIfChanged = true;
+      };
+
+      systemd.services.brainrotos-boot-check-validity = {
+        description = "Mark booted generation as blessed";
+        requiredBy = ["boot-complete.target"];
+        before = ["boot-complete.target"];
+        after = ["graphical.target" "display-manager.service"];
+
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+        };
+
+        path = with pkgs; [jq systemd];
+
+        script = ''
+          while :; do
+            if [ ! -z "$(loginctl list-sessions -j | jq '.[] | select(.seat != null) | select(.tty != null)')" ]; then
+              echo "Login successful"
+              exit 0
+            fi
+          done
+        '';
       };
     })
   ];
