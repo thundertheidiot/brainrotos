@@ -44,6 +44,7 @@ in {
       systemd.services.brainrotos-boot-check-validity = {
         description = "Mark booted generation as blessed";
         requiredBy = ["boot-complete.target"];
+        wantedBy = ["multi-user.target"];
         before = ["boot-complete.target"];
         after = ["graphical.target" "display-manager.service"];
 
