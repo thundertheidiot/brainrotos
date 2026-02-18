@@ -17,7 +17,27 @@ in {
     };
   };
 
-  config =
-    mkMerge [
-    ];
+  config = mkMerge [
+    (mkIf (cfg.enable) {
+      systemd.services.reactivation-test = {
+        description = "test reactivation service";
+        wantedBy = ["multi-user.target"];
+
+        unitConfig = {
+          ConditionPathExists = ["/run/current-system" "/run/booted-system"];
+        };
+
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = false;
+        };
+
+        script = ''
+          echo "System activated at $(date)"
+        '';
+
+        restartIfChanged = true;
+      };
+    })
+  ];
 }
