@@ -24,16 +24,18 @@ in {
       DISK="''${1:-/dev/vda}"
 
       parted -s "$DISK" -- mklabel gpt
-      parted -s "$DISK" -- mkpart ESP fat32 1MiB 512MiB
-      parted -s "$DISK" -- set 1 esp on
+      parted -s "$DISK" -- mkpart primary 1MiB 2MiB
+      parted -s "$DISK" -- set 1 bios_grub on
+      parted -s "$DISK" -- mkpart ESP fat32 2MiB 512MiB
+      parted -s "$DISK" -- set 2 esp on
       parted -s "$DISK" -- mkpart primary btrfs 512MiB 100%
 
       if [[ "$DISK" == *"nvme"* ]] || [[ "$DISK" == *"mmcblk"* ]]; then
-          BOOT_PART="''${DISK}p1"
-          MAIN_PART="''${DISK}p2"
+          BOOT_PART="''${DISK}p2"
+          MAIN_PART="''${DISK}p3"
       else
-          BOOT_PART="''${DISK}1"
-          MAIN_PART="''${DISK}2"
+          BOOT_PART="''${DISK}2"
+          MAIN_PART="''${DISK}3"
       fi
 
       mkfs.fat -F 32 -n BROS_BOOT "$BOOT_PART"
