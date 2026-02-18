@@ -45,6 +45,7 @@ in {
         description = "Bless current generation";
         requires = ["boot-complete.target"];
         after = ["boot-complete.target"];
+        wantedBy = ["multi-user.target"];
 
         serviceConfig = {
           Type = "oneshot";
