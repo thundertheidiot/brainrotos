@@ -65,6 +65,8 @@ in {
             user.v1.name = "user";
           };
 
+          $([ ! -d /sys/firmware/efi ] && echo "boot.loader.grub.devices = [\"$(lsblk -pno pkname /dev/disk/by-label/BROS_BOOT)\"];")
+
           networking.hostName = "brainrotos";
           nixpkgs.hostPlatform = {system = "x86_64-linux";};
           system.stateVersion = "25.11";
