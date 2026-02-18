@@ -59,6 +59,7 @@ in {
       {
         config = {
           brainrotos = {
+            efi.v1.enable = $([ -d /sys/firmware/efi ] && echo true || echo false);
             desktop.gnome.v1.enable = true;
             firefox.v1.enable = true;
             user.v1.name = "user";
@@ -72,6 +73,10 @@ in {
       EOF
 
       nixos-install --impure --no-root-password --no-channel-copy -I brainrotos=/mnt/nix/osconfig --flake ${inputs.self.outPath}#base
+
+      echo <<EOF
+      BrainrotOS installed
+      EOF
     '';
   };
 }
