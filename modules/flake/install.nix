@@ -24,16 +24,18 @@ in {
       DISK="''${1:-/dev/vda}"
 
       parted -s "$DISK" -- mklabel gpt
-      parted -s "$DISK" -- mkpart ESP fat32 1MiB 512MiB
-      parted -s "$DISK" -- set 1 esp on
+      parted -s "$DISK" -- mkpart primary 1MiB 2MiB
+      parted -s "$DISK" -- set 1 bios_grub on
+      parted -s "$DISK" -- mkpart ESP fat32 2MiB 512MiB
+      parted -s "$DISK" -- set 2 esp on
       parted -s "$DISK" -- mkpart primary btrfs 512MiB 100%
 
       if [[ "$DISK" == *"nvme"* ]] || [[ "$DISK" == *"mmcblk"* ]]; then
-          BOOT_PART="''${DISK}p1"
-          MAIN_PART="''${DISK}p2"
+          BOOT_PART="''${DISK}p2"
+          MAIN_PART="''${DISK}p3"
       else
-          BOOT_PART="''${DISK}1"
-          MAIN_PART="''${DISK}2"
+          BOOT_PART="''${DISK}2"
+          MAIN_PART="''${DISK}3"
       fi
 
       mkfs.fat -F 32 -n BROS_BOOT "$BOOT_PART"
@@ -59,10 +61,13 @@ in {
       {
         config = {
           brainrotos = {
+            efi.v1.enable = $([ -d /sys/firmware/efi ] && echo true || echo false);
             desktop.gnome.v1.enable = true;
             firefox.v1.enable = true;
             user.v1.name = "user";
           };
+
+          $([ ! -d /sys/firmware/efi ] && echo "boot.loader.grub.devices = [\"$(lsblk -pno pkname /dev/disk/by-label/BROS_BOOT)\"];")
 
           networking.hostName = "brainrotos";
           nixpkgs.hostPlatform = {system = "x86_64-linux";};
@@ -72,6 +77,10 @@ in {
       EOF
 
       nixos-install --impure --no-root-password --no-channel-copy -I brainrotos=/mnt/nix/osconfig --flake ${inputs.self.outPath}#base
+
+      echo <<EOF
+      BrainrotOS installed
+      EOF
     '';
   };
 }
