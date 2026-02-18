@@ -21,7 +21,8 @@ in {
     (mkIf (cfg.enable) {
       systemd.services.reactivation-test = {
         description = "test reactivation service";
-        wantedBy = ["multi-user.target"];
+        requiredBy = ["sysinit-reactivation.target"];
+        before = ["sysinit-reactivation.target"];
 
         unitConfig = {
           ConditionPathExists = ["/run/current-system" "/run/booted-system"];
@@ -29,7 +30,7 @@ in {
 
         serviceConfig = {
           Type = "oneshot";
-          RemainAfterExit = false;
+          RemainAfterExit = true;
         };
 
         script = ''
