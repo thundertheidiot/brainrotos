@@ -41,10 +41,24 @@ in {
         restartIfChanged = true;
       };
 
+      systemd.services.brainrotos-bless-boot = {
+        description = "Bless current generation";
+        requires = ["boot-complete.target"];
+        after = ["boot-complete.target"];
+
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+        };
+
+        script = ''
+          echo "Fake boot blessed"
+        '';
+      };
+
       systemd.services.brainrotos-boot-check-validity = {
         description = "Mark booted generation as blessed";
         requiredBy = ["boot-complete.target"];
-        wantedBy = ["multi-user.target"];
         before = ["boot-complete.target"];
         after = ["graphical.target" "display-manager.service"];
 
