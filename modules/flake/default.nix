@@ -13,6 +13,10 @@
     ./vm.nix
   ];
 
+  perSystem = {pkgs, ...}: {
+    packages.greenboot = pkgs.callPackage ../../pkgs/greenboot.nix {};
+  };
+
   flake.nixosConfigurations = let
     inherit (builtins) readDir;
     inherit (lib.strings) removeSuffix;
