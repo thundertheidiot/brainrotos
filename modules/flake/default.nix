@@ -10,6 +10,7 @@
 
   imports = [
     ./install.nix
+    ./vm.nix
   ];
 
   flake.nixosConfigurations = let

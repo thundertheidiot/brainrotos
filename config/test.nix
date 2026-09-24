@@ -1,4 +1,4 @@
-{...}: {
+{ ... }: {
   # doesn't import local config
   config = {
     brainrotos = {
@@ -9,17 +9,14 @@
       firefox.v1.enable = true;
       flatpak.v1.enable = true;
       gpu.v1.type = "intel";
+      user.v1.name = "test";
     };
 
-    nixpkgs.hostPlatform = {system = "x86_64-linux";};
+    nixpkgs.hostPlatform = {
+      system = "x86_64-linux";
+    };
     system.stateVersion = "25.11";
 
-    users.users.test = {
-      isNormalUser = true;
-      extraGroups = ["wheel"];
-      initialPassword = "password";
-    };
-
-    users.users.root.password = "password";
+    users.users.root.password = "password123";
   };
 }

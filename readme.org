@@ -78,6 +78,37 @@ nixos-install --impure --no-root-password --no-channel-copy -I brainrotos=/mnt/n
 
 The default password of the user account is =password123=, this can be changed and the change is persisted.
 
+To update the installed system, run this inside the VM and reboot:
+
+#+begin_src shell
+sudo nixos-rebuild boot --impure --flake github:thundertheidiot/brainrotos#base
+#+end_src
+
+(the local machine configuration is picked up through the =brainrotos= nix path that is already configured on the system)
+
+** VM testing
+
+There is a setup for vm testing with both an ephemeral and persistent qemu vm.
+
+*** Ephemeral VM
+
+#+begin_src shell
+nix run .#vm
+#+end_src
+
+Runs a throwaway VM of the =test= configuration with a GTK window. The root filesystem is a tmpfs and the nix store is shared with the host, so it boots fast and nothing persists between runs.
+
+*** Persistent installed VM
+
+#+begin_src shell
+sudo nix run .#vm-install    # partition + install into ./vm/disk.qcow2 (run once)
+nix run .#vm-installed       # boot it, UEFI, state persists across reboots
+#+end_src
+
+=vm-install= runs the installer (=vm-disk-setup= + =quick-install=) against a sparse qcow2 image through =qemu-nbd=, so the image only occupies the space actually used. Pass =--force= to recreate an existing image.
+
+=vm-installed= boots the installed system.
+
 * TODOs
 
 - [ ] TODO automatic rollback
