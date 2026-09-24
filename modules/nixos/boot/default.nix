@@ -18,6 +18,10 @@ in {
     };
   };
 
+  imports = [
+    ./validation.nix
+  ];
+
   config = mkMerge [
     (mkIf (!cfg.enable) {
       boot.loader = {

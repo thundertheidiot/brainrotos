@@ -1,7 +1,7 @@
 {...}: {
   imports = [
     ./base.nix
-    ./boot.nix
+    ./boot
     ./cleanup.nix
     ./desktop
     ./gpu.nix
