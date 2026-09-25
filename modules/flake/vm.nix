@@ -25,6 +25,13 @@
                 x = 1280;
                 y = 800;
               };
+              forwardPorts = [
+                {
+                  from = "host";
+                  host.port = 2222;
+                  guest.port = 22;
+                }
+              ];
             };
           }
         ];
@@ -92,13 +99,61 @@
           -smp "$CPUS" \
           -device virtio-rng-pci \
           -device virtio-net-pci,netdev=n0 \
-          -netdev user,id=n0 \
+          -netdev "user,id=n0,hostfwd=tcp::2222-:22" \
           -drive "file=$DISK,if=virtio,format=qcow2,cache=writeback" \
           "''${PFLASH[@]}" \
           -vga none \
           -device virtio-vga \
           -usb -device usb-tablet \
           -display gtk
+      '';
+    };
+
+    packages.vm-push = pkgs.writeShellApplication {
+      name = "vm-push";
+      runtimeInputs = with pkgs; [
+        coreutils
+        openssh
+        rsync
+      ];
+      text = ''
+        set -euo pipefail
+
+        # copy the working tree into the test vm (ssh on port 2222, root,
+        # password123) and rebuild it from /root/brainrotos, so test
+        # generations never have to be pushed to a remote
+        #
+        #   nix run .#vm-push            # stage a new generation (boot)
+        #   nix run .#vm-push switch     # activate immediately
+        #
+        ACTION="''${1:-boot}"
+
+        case "$ACTION" in
+          boot | switch | test | build) ;;
+          *)
+            echo "usage: vm-push [boot|switch|test|build]" >&2
+            exit 1
+            ;;
+        esac
+
+        SSH_OPTS=(
+          -p 2222
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+        )
+
+        rsync -a --delete \
+          --exclude .git --exclude vm --exclude result \
+          -e "ssh ''${SSH_OPTS[*]}" \
+          "$PWD/" root@localhost:/root/brainrotos/
+
+        # remote command over stdin: expansions happen client side
+        # (shellcheck misreads the intent; $ACTION must expand locally)
+        # shellcheck disable=SC2087
+        ssh "''${SSH_OPTS[@]}" root@localhost bash -s <<EOF
+          cd /root/brainrotos &&
+          nixos-rebuild $ACTION --impure --flake /root/brainrotos#base
+EOF
       '';
     };
 

@@ -79,6 +79,12 @@ in
 
           $([ "$IS_EFI" = "false" ] && echo "boot.loader.grub.devices = [\"''${BRAINROTOS_GRUB_DEVICE:-$(lsblk -pno pkname /dev/disk/by-label/BROS_BOOT)}\"];")
 
+          # test vm: ssh in to push generations
+          services.openssh.enable = true;
+          services.openssh.settings.PermitRootLogin = "yes";
+          services.openssh.settings.PasswordAuthentication = true;
+          users.users.root.initialPassword = "password123";
+
           networking.hostName = "brainrotos";
           nixpkgs.hostPlatform = {system = "x86_64-linux";};
           system.stateVersion = "25.11";

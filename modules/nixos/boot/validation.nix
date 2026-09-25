@@ -91,6 +91,7 @@ let
       gnused
       grub2
       systemd
+      util-linux
     ];
 
     text = lib.readFile (
@@ -100,15 +101,13 @@ let
         inherit bootLoader;
         grubenv = grubenvFile;
         loaderConf = loaderConfFile;
+        desktop =
+          if config.services.displayManager.enable
+          then "1"
+          else "0";
       }
     );
 
-    # text = ''exec ${pkgs.replaceVarsWith {
-    #   src = ./boot-validation.sh;
-    #   isExecutable = true;
-    #   replacements = {
-    #   };
-    # }} "$@"'';
   };
 
   greenbootHook =
@@ -158,9 +157,8 @@ in
         type = int;
         default = 3;
         description = ''
-          Number of failed boots before falling back to the previous
-          generation. The failing generation is booted once plus this many
-          retries (greenboot semantics).
+          How many boots a broken generation gets before falling back to
+          the previous one (the first boot plus retries).
         '';
       };
 
@@ -209,8 +207,8 @@ in
     (mkIf enabled {
       assertions = [
         {
-          assertion = cfg.attempts >= 1;
-          message = "brainrotos.boot-validation.v1.attempts must be at least 1";
+          assertion = cfg.attempts >= 2;
+          message = "brainrotos.boot-validation.v1.attempts must be at least 2";
         }
         {
           assertion = cfg.desktopGraceSec >= 30;
@@ -233,6 +231,10 @@ in
         "greenboot/greenboot.conf".text = ''
           GREENBOOT_MAX_BOOT_ATTEMPTS=${toString cfg.attempts}
         '';
+        # tier 1 success hook: re-asserts fallback steering before
+        # greenboot clears the boot counter
+        "greenboot/green.d/10-fallback-steer".source =
+          greenbootHook "10-fallback-steer" "on-green";
         "greenboot/red.d/10-fallback-reboot".source = greenbootHook "10-fallback-reboot" "on-fail";
       }
       // (
@@ -292,9 +294,26 @@ in
         };
       };
 
+      # the healthcheck itself must NOT be a dependency of multi-user (or
+      # any boot target): it blocks for up to desktopGraceSec waiting for
+      # the desktop, and graphical.target requires multi-user - the boot
+      # would deadlock until the grace timeout. a trigger unit kicks it
+      # off unblocked instead.
+      systemd.services.greenboot-healthcheck-trigger = {
+        description = "Kick off Greenboot Health Checks without blocking boot";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "brainrotos-boot-prepare.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = "${pkgs.systemd}/bin/systemctl start --no-block greenboot-healthcheck.service";
+        };
+      };
+
       systemd.services.greenboot-healthcheck = {
         description = "Greenboot Health Checks Runner";
-        wantedBy = [ "multi-user.target" ];
+        # still required by boot-complete.target for opt-in consumers, but
+        # nothing in the default boot pulls boot-complete in
         requiredBy = [ "boot-complete.target" ];
         before = [ "boot-complete.target" ];
         after = [ "brainrotos-boot-prepare.service" ];
@@ -320,9 +339,11 @@ in
         ];
       };
 
+      # purely opt-in: services that need "boot validated" ordering can
+      # want this themselves. it must not be pulled into the default boot -
+      # it requires boot-complete.target which waits for the healthcheck
       systemd.targets.greenboot-success = {
         description = "GreenBoot Healthcheck Success Target";
-        wantedBy = [ "multi-user.target" ];
         requires = [ "boot-complete.target" ];
         after = [
           "greenboot-healthcheck.service"
@@ -337,20 +358,29 @@ in
         '')
       ];
 
-      # switch-time cycle reset: steering for a rolled-back generation must
-      # not survive into the boot of a newly switched generation. guarded
-      # by mountpoint - early boot activation may run before /boot is
-      # mounted; the prepare unit covers that case.
-      system.activationScripts.brainrotosBootValidationReset =
-        lib.stringAfter [ "etc" ] ''
-          if ${pkgs.util-linux}/bin/mountpoint -q /boot; then
-            ${bootValidation}/bin/brainrotos-boot-validation reset-cycle || true
-          fi
-        '';
     })
 
+    # cycle reset at bootloader-update time: when a newer generation is
+    # activated (switch AND boot), steering for a rolled-back generation
+    # must be cleared, or the boot after a rebuild would go to the stale
+    # fallback. this is the only hook that fires in both switch and boot
+    # modes - activation scripts miss boot mode, and the prepare unit
+    # misses the reboot right after a boot-mode rebuild.
     (mkIf (enabled && useGrub) {
       boot.loader.grub.extraConfig = grubCountingSnippet;
+      boot.loader.grub.extraPrepareConfig = ''
+        if ${pkgs.util-linux}/bin/mountpoint -q /boot; then
+          ${bootValidation}/bin/brainrotos-boot-validation reset-cycle || true
+        fi
+      '';
+    })
+
+    (mkIf (enabled && useSystemdBoot) {
+      boot.loader.systemd-boot.extraInstallCommands = ''
+        if ${pkgs.util-linux}/bin/mountpoint -q ${config.boot.loader.efi.efiSysMountPoint}; then
+          ${bootValidation}/bin/brainrotos-boot-validation reset-cycle || true
+        fi
+      '';
     })
   ];
 }

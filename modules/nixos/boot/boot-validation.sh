@@ -9,13 +9,18 @@ LOADER_CONF="${BRAINROTOS_LOADER_CONF:-@loaderConf@}"
 ATTEMPTS=@attempts@
 TIMEOUT=@timeout@
 BOOTLOADER="@bootLoader@"
+DESKTOP=@desktop@
 
+# greenboot swallows successful script output, so everything also goes to
+# the journal directly (logger is best-effort; may be absent in tests)
 log() {
   echo "brainrotos-boot-validation: $*"
+  logger -t brainrotos-boot-validation "$*" 2>/dev/null || true
 }
 
 fail() {
   echo "brainrotos-boot-validation: $*" >&2
+  logger -t brainrotos-boot-validation -p daemon.warning "$*" 2>/dev/null || true
 }
 
 grubenv_get() {
@@ -31,9 +36,21 @@ grubenv_unset() {
 }
 
 gen_number() {
-  local link
-  link=$(readlink /nix/var/nix/profiles/system) || return 1
-  sed -n 's/^.*system-\([0-9]\+\)-link$/\1/p' <<< "$link"
+  # the profile symlink points at the LAST BUILT generation (nixos-rebuild
+  # boot moves it before reboot), not the running one - derive the booted
+  # generation by matching /run/booted-system against the profile links
+  local booted link
+  booted=$(readlink -f /run/booted-system 2>/dev/null) || return 1
+  [ -n "$booted" ] || return 1
+  for link in /nix/var/nix/profiles/system-*-link; do
+    [ -e "$link" ] || continue
+    if [ "$(readlink -f "$link")" = "$booted" ]; then
+      sed -n 's/^.*system-\([0-9]\+\)-link$/\1/p' <<< "$link"
+      return 0
+    fi
+  done
+  fail "booted system $booted is not in the system profile"
+  return 1
 }
 
 prev_gen() {
@@ -131,7 +148,9 @@ prepare() {
     grubenv_unset bros_fallback_target
     grubenv_unset bros_boot_entry
     grubenv_set bros_armed_gen "$gen"
-    grubenv_set boot_counter "$ATTEMPTS"
+    # attempts counts total boots of the broken generation (this one plus
+    # retries); greenboot reboots on its own while the counter is positive
+    grubenv_set boot_counter "$((ATTEMPTS - 1))"
     if [ "$BOOTLOADER" = "grub" ]; then
       if title=$(grub_fallback_entry "$prev"); then
         grubenv_set bros_fallback_entry "$title"
@@ -139,7 +158,7 @@ prepare() {
         fail "cannot compute grub fallback entry for generation $prev"
       fi
     fi
-    log "armed validation for generation $gen ($ATTEMPTS attempts, fallback: generation $prev)"
+    log "armed validation for generation $gen ($ATTEMPTS boots, fallback: generation $prev)"
   elif [ -n "$counter" ] && [ "$counter" -gt 0 ] 2>/dev/null; then
     # retry boot of the armed generation; grub already decremented
     # pre-boot, systemd-boot needs a hand
@@ -207,6 +226,18 @@ desktop_health() {
 on_success() {
   local gen target title
   gen=$(gen_number) || return 0
+  # a session opening is not proof the boot is good: refuse to record
+  # anything until the desktop is actually up - crash-looping display
+  # managers open sessions too (autologin, greeter churn)
+  if [ "$DESKTOP" = "1" ]; then
+    if
+      [ "$(systemctl is-active graphical.target 2>/dev/null)" != "active" ] ||
+        [ "$(systemctl is-active display-manager.service 2>/dev/null)" != "active" ]
+    then
+      fail "desktop not up yet; not recording generation $gen as last good"
+      return 0
+    fi
+  fi
   grubenv_init
   grubenv_set bros_last_good_gen "$gen"
   target=$(grubenv_get bros_fallback_target)
@@ -270,7 +301,37 @@ on_fail() {
   if [ -n "${BRAINROTOS_BOOT_VALIDATION_DRY_RUN:-}" ]; then
     log "dry run: would reboot into generation $prev"
   else
-    shutdown -r +1 "brainrotos: boot validation failed $ATTEMPTS times - rebooting into previous generation $prev"
+    # short delay so greenboot finishes its own grubenv bookkeeping before
+    # the reboot tears everything down
+    systemd-run --on-active=15 --unit=brainrotos-fallback-reboot \
+      systemctl reboot
+  fi
+}
+
+on_green() {
+  # runs from green.d inside greenboot's success path, BEFORE it writes
+  # boot_success=1 and clears the boot counter. on a rollback landing the
+  # steering must be re-asserted here, otherwise the next boot would go
+  # back to the broken newest generation (steering only survives via this
+  # var, and greenboot just removed the counter that was steering)
+  local gen target title
+  gen=$(gen_number) || return 0
+  target=$(grubenv_get bros_fallback_target)
+  if [ -n "$target" ] && [ "$target" = "$gen" ]; then
+    if [ "$BOOTLOADER" = "grub" ]; then
+      if title=$(grub_fallback_entry "$gen"); then
+        grubenv_set bros_boot_entry "$title"
+        log "steering persisted to generation $gen"
+      else
+        fail "cannot compute grub entry for generation $gen; steering not updated"
+      fi
+    else
+      if loader_set_default "$gen"; then
+        log "steering persisted to generation $gen"
+      else
+        fail "cannot steer systemd-boot to generation $gen"
+      fi
+    fi
   fi
 }
 
@@ -317,14 +378,23 @@ rollback() {
   log "steered boot to generation $target - reboot to apply"
 }
 
+profile_gen() {
+  # what the profile points at: the last staged generation. only used by
+  # reset-cycle (bootloader-update time), where the profile has already
+  # moved to the newly staged generation while the booted one is older
+  local link
+  link=$(readlink /nix/var/nix/profiles/system) || return 1
+  sed -n 's/^.*system-\([0-9]\+\)-link$/\1/p' <<< "$link"
+}
+
 reset_cycle() {
-  # clear validation state when a different generation is activated
+  # clear validation state when a different generation is staged/activated
   # (nixos-rebuild switch/boot of a new gen): steering and counters from
   # the old cycle must not survive. guarded by mountpoint in the caller -
   # at boot time /boot may not be mounted yet and the prepare unit takes
   # over.
   local gen armed
-  gen=$(gen_number) || return 0
+  gen=$(profile_gen) || return 0
   armed=$(grubenv_get bros_armed_gen)
   if [ "$gen" != "$armed" ]; then
     grubenv_unset boot_counter
@@ -332,7 +402,7 @@ reset_cycle() {
     grubenv_unset bros_fallback_entry
     grubenv_unset bros_fallback_target
     grubenv_unset bros_boot_entry
-    log "validation cycle reset for activated generation $gen"
+    log "validation cycle reset for staged generation $gen"
   fi
 }
 
@@ -340,11 +410,13 @@ case "${1:-}" in
   prepare) prepare ;;
   desktop-health) desktop_health ;;
   on-success) on_success ;;
+  on-green) on_green ;;
   on-fail) on_fail ;;
   rollback) rollback "${2:-}" ;;
   reset-cycle) reset_cycle ;;
+  gen-number) gen_number ;;
   *)
-    fail "usage: brainrotos-boot-validation {prepare|desktop-health|on-success|on-fail|rollback [gen]|reset-cycle}"
+    fail "usage: brainrotos-boot-validation {prepare|desktop-health|on-success|on-green|on-fail|rollback [gen]|reset-cycle|gen-number}"
     exit 2
     ;;
 esac
