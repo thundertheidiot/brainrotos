@@ -101,10 +101,6 @@ let
         inherit bootLoader;
         grubenv = grubenvFile;
         loaderConf = loaderConfFile;
-        desktop =
-          if config.services.displayManager.enable
-          then "1"
-          else "0";
       }
     );
 
@@ -231,32 +227,17 @@ in
         "greenboot/greenboot.conf".text = ''
           GREENBOOT_MAX_BOOT_ATTEMPTS=${toString cfg.attempts}
         '';
+        # tier 1: desktop came up. greenboot marks boot_success=1 and
+        # clears the retry counter, so an unattended-but-working machine
+        # never accumulates failures
+        "greenboot/check/required.d/10-desktop-health".source =
+          greenbootHook "10-desktop-health" "desktop-health";
         # tier 1 success hook: re-asserts fallback steering before
         # greenboot clears the boot counter
         "greenboot/green.d/10-fallback-steer".source =
           greenbootHook "10-fallback-steer" "on-green";
         "greenboot/red.d/10-fallback-reboot".source = greenbootHook "10-fallback-reboot" "on-fail";
       }
-      // (
-        if config.services.displayManager.enable then
-          {
-            # tier 1: desktop came up. greenboot marks boot_success=1 and
-            # clears the retry counter, so an unattended-but-working machine
-            # never accumulates failures
-            "greenboot/check/required.d/10-desktop-health".source =
-              greenbootHook "10-desktop-health" "desktop-health";
-          }
-        else
-          {
-            # no desktop to check; keep required.d non-empty so greenboot
-            # does not fail its runner. validation then only advances on
-            # hard hangs, and logins still record the last good generation
-            "greenboot/check/required.d/10-always-ok".source = pkgs.writeShellScript "10-always-ok" ''
-              # no display manager configured; nothing to check
-              exit 0
-            '';
-          }
-      )
       // listToAttrs (
         map (p: {
           name = "greenboot/check/required.d/50-${p.name}";

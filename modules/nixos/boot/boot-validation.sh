@@ -9,7 +9,6 @@ LOADER_CONF="${BRAINROTOS_LOADER_CONF:-@loaderConf@}"
 ATTEMPTS=@attempts@
 TIMEOUT=@timeout@
 BOOTLOADER="@bootLoader@"
-DESKTOP=@desktop@
 
 # greenboot swallows successful script output, so everything also goes to
 # the journal directly (logger is best-effort; may be absent in tests)
@@ -229,14 +228,12 @@ on_success() {
   # a session opening is not proof the boot is good: refuse to record
   # anything until the desktop is actually up - crash-looping display
   # managers open sessions too (autologin, greeter churn)
-  if [ "$DESKTOP" = "1" ]; then
-    if
-      [ "$(systemctl is-active graphical.target 2>/dev/null)" != "active" ] ||
-        [ "$(systemctl is-active display-manager.service 2>/dev/null)" != "active" ]
-    then
-      fail "desktop not up yet; not recording generation $gen as last good"
-      return 0
-    fi
+  if
+    [ "$(systemctl is-active graphical.target 2>/dev/null)" != "active" ] ||
+      [ "$(systemctl is-active display-manager.service 2>/dev/null)" != "active" ]
+  then
+    fail "desktop not up yet; not recording generation $gen as last good"
+    return 0
   fi
   grubenv_init
   grubenv_set bros_last_good_gen "$gen"
