@@ -36,8 +36,6 @@ let
     else "${config.boot.loader.efi.efiSysMountPoint}/greenboot.grubenv";
   loaderConfFile = "${config.boot.loader.efi.efiSysMountPoint}/loader/loader.conf";
 
-  bootLoader = if useGrub then "grub" else "systemd-boot";
-
   greenboot = pkgs.callPackage ../../../pkgs/greenboot.nix {
     grubenvPath = grubenvFile;
   };
@@ -81,6 +79,22 @@ let
       save_env boot_success
     '';
 
+  # per-bootloader function library, sourced by the shared core; only the
+  # one matching this system's bootloader is referenced (and shipped)
+  loaderLibSrc =
+    if useGrub
+    then ./boot-validation-grub.sh
+    else ./boot-validation-systemd-boot.sh;
+
+  loaderLib = pkgs.runCommand "boot-validation-loader-lib" {
+    nativeBuildInputs = [ pkgs.shellcheck ];
+    # variables and helper functions "unassigned" in the lib come from the
+    # shared core
+  } ''
+    install -Dm555 ${loaderLibSrc} $out
+    shellcheck --exclude=SC2154 $out
+  '';
+
   # runtime helper; @var@ tokens in boot-validation.sh are substituted here
   bootValidation = pkgs.writeShellApplication {
     name = "brainrotos-boot-validation";
@@ -98,9 +112,9 @@ let
       pkgs.replaceVars ./boot-validation.sh {
         inherit (cfg) attempts;
         timeout = cfg.desktopGraceSec;
-        inherit bootLoader;
         grubenv = grubenvFile;
         loaderConf = loaderConfFile;
+        loaderLib = "${loaderLib}";
       }
     );
 
