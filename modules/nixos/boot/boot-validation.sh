@@ -56,9 +56,9 @@ grub_fallback_entry() {
   local link gen_date version title
   link="/nix/var/nix/profiles/system-$1-link"
   gen_date=$(date -d "@$(stat -c %Y "$link")" +%F 2>/dev/null) || return 1
-  version=$(cat "$link/nixos-version" 2>/dev/null)
+  version=$(cat "$link/nixos-version" 2>/dev/null) || true
   if [ -z "$version" ]; then
-    version=$(basename "$(readlink -f "$link/kernel")" 2>/dev/null)
+    version=$(basename "$(readlink -f "$link/kernel")" 2>/dev/null) || true
   fi
   [ -n "$version" ] || return 1
   title="NixOS - Configuration $1"
@@ -92,10 +92,15 @@ loader_clear_default() {
   fi
 }
 
+# the state file lives in a directory that may not exist yet (no /boot/grub
+# on systemd-boot systems); make sure it does before any write
+grubenv_init() {
+  mkdir -p "$(dirname "$GRUBENV")"
+  [ -f "$GRUBENV" ] || grub-editenv "$GRUBENV" create
+}
+
 prepare() {
-  if [ ! -f "$GRUBENV" ]; then
-    grub-editenv "$GRUBENV" create
-  fi
+  grubenv_init
   local gen armed lastgood counter prev title
   gen=$(gen_number) || {
     fail "cannot determine system generation"
@@ -114,6 +119,10 @@ prepare() {
     # clear any stale cycle, then arm a fresh one
     prev=$(prev_gen "$gen")
     if [ -z "$prev" ]; then
+      # without a fallback target, failure handling must never reboot:
+      # greenboot would set its own counter on first failure and loop
+      # forever, so neutralize it
+      grubenv_unset boot_counter
       fail "no previous generation to fall back to; boot validation not armed"
       return 0
     fi
@@ -156,23 +165,48 @@ prepare() {
   fi
 }
 
-login_watchdog() {
+desktop_health() {
+  # machine startup time, NOT time for a user to log in: a machine whose
+  # desktop came up never times out, no matter when (or whether) someone
+  # logs in. failure here is positive evidence that the generation cannot
+  # bring up a desktop at all.
   local deadline=$((SECONDS + TIMEOUT))
+  local last=""
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if loginctl --no-legend list-sessions 2>/dev/null \
-      | awk '$2 ~ /^[0-9]+$/ && $2 + 0 >= 1000 { found = 1 } END { exit !found }'; then
-      log "user session detected; boot validated"
+    if [ "$(systemctl is-failed display-manager.service 2>/dev/null)" = "failed" ]; then
+      fail "display-manager.service failed; declaring boot failed"
+      return 1
+    fi
+    local g dm state
+    # systemctl exits non-zero for every non-active state; swallow that or
+    # errexit kills the poll loop before the desktop ever comes up
+    g=$(systemctl is-active graphical.target 2>/dev/null) || true
+    dm=$(systemctl is-active display-manager.service 2>/dev/null) || true
+    state="$g/$dm"
+    if [ "$state" != "$last" ]; then
+      log "waiting for desktop: graphical.target=$g display-manager=$dm"
+      last="$state"
+    fi
+    if [ "$g" = "active" ] && [ "$dm" = "active" ]; then
+      log "desktop came up; generation validated once a user logs in"
       return 0
     fi
     sleep 5
   done
-  fail "no user login within $TIMEOUT s; declaring boot failed"
+  # without a previous generation there is nothing to fall back to, and
+  # reporting failure would make greenboot reboot-loop the machine
+  if [ -z "$(prev_gen "$(gen_number)")" ]; then
+    fail "desktop did not come up within $TIMEOUT s and no previous generation exists; not marking boot failed"
+    return 0
+  fi
+  fail "desktop did not come up within $TIMEOUT s; declaring boot failed"
   return 1
 }
 
 on_success() {
   local gen
   gen=$(gen_number) || return 0
+  grubenv_init
   grubenv_set bros_last_good_gen "$gen"
   if [ "$BOOTLOADER" = "systemd-boot" ]; then
     loader_clear_default
@@ -182,6 +216,7 @@ on_success() {
 
 on_fail() {
   local counter gen prev title target
+  grubenv_init
   counter=$(grubenv_get boot_counter)
   # greenboot reboots on its own while retries remain
   if [ -z "$counter" ] || [ "$counter" -gt 0 ] 2>/dev/null; then
@@ -224,11 +259,11 @@ on_fail() {
 
 case "${1:-}" in
   prepare) prepare ;;
-  login-watchdog) login_watchdog ;;
+  desktop-health) desktop_health ;;
   on-success) on_success ;;
   on-fail) on_fail ;;
   *)
-    fail "usage: brainrotos-boot-validation {prepare|login-watchdog|on-success|on-fail}"
+    fail "usage: brainrotos-boot-validation {prepare|desktop-health|on-success|on-fail}"
     exit 2
     ;;
 esac

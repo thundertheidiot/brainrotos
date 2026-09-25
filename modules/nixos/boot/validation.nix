@@ -17,6 +17,7 @@ let
     int
     listOf
     package
+    str
     ;
   inherit (lib.attrsets) listToAttrs;
 
@@ -26,12 +27,20 @@ let
   useSystemdBoot = config.boot.loader.systemd-boot.enable;
   enabled = cfg.enable && (useGrub || useSystemdBoot);
 
-  greenboot = pkgs.callPackage ../../../pkgs/greenboot.nix { };
-
-  grubenvFile = "/boot/grub/grubenv";
+  # grub must find the env block at its prefix (/boot/grub/grubenv);
+  # on non-grub systems the path is arbitrary, it is only greenboot's
+  # state store
+  grubenvFile =
+    if useGrub
+    then "/boot/grub/grubenv"
+    else "${config.boot.loader.efi.efiSysMountPoint}/greenboot.grubenv";
   loaderConfFile = "${config.boot.loader.efi.efiSysMountPoint}/loader/loader.conf";
 
   bootLoader = if useGrub then "grub" else "systemd-boot";
+
+  greenboot = pkgs.callPackage ../../../pkgs/greenboot.nix {
+    grubenvPath = grubenvFile;
+  };
 
   # grub has no arithmetic (nixpkgs does not carry fedora's increment
   # module), so counting is done by matching against literal strings.
@@ -79,13 +88,22 @@ let
       systemd
     ];
 
-    text = pkgs.replaceVars ./boot-validation.sh {
-      inherit (cfg) attempts;
-      timeout = cfg.loginTimeoutSec;
-      inherit bootLoader;
-      grubenv = grubenvFile;
-      loaderConf = loaderConfFile;
-    };
+    text = lib.readFile (
+      pkgs.replaceVars ./boot-validation.sh {
+        inherit (cfg) attempts;
+        timeout = cfg.desktopGraceSec;
+        inherit bootLoader;
+        grubenv = grubenvFile;
+        loaderConf = loaderConfFile;
+      }
+    );
+
+    # text = ''exec ${pkgs.replaceVarsWith {
+    #   src = ./boot-validation.sh;
+    #   isExecutable = true;
+    #   replacements = {
+    #   };
+    # }} "$@"'';
   };
 
   greenbootHook =
@@ -93,6 +111,20 @@ let
     pkgs.writeShellScript name ''
       exec ${bootValidation}/bin/brainrotos-boot-validation ${sub}
     '';
+
+  # PAM session-open hook (pam_exec): a real user (uid >= 1000) logging in
+  # marks the generation validated. greeter/system users do not count and
+  # session close is ignored. runs as root from the PAM stack.
+  pamLoginHook = pkgs.writeShellScript "brainrotos-boot-validation-pam" ''
+    if [ "''${PAM_TYPE:-}" != "open_session" ]; then
+      exit 0
+    fi
+    uid=$(${pkgs.coreutils}/bin/id -u "''${PAM_USER:-}" 2>/dev/null) || exit 0
+    if [ "$uid" -lt 1000 ]; then
+      exit 0
+    fi
+    exec ${bootValidation}/bin/brainrotos-boot-validation on-success
+  '';
 
   # greenboot runs on every `nixos-rebuild switch` (switch-to-configuration
   # starts newly wanted units); the healthcheck must only run once per boot,
@@ -127,12 +159,32 @@ in
         '';
       };
 
-      loginTimeoutSec = mkOption {
+      desktopGraceSec = mkOption {
         type = int;
         default = 300;
         description = ''
-          How long to wait for a user login before declaring a boot failed.
-          GDM starting is not success; a login is.
+          How long to wait for graphical.target and the display manager to
+          come up before declaring a boot failed. This is machine startup
+          time, not time for a user to log in: a machine whose desktop is
+          up never fails validation, no matter when (or whether) someone
+          logs in.
+        '';
+      };
+
+      validatedLogins = mkOption {
+        type = listOf str;
+        default = [
+          "login"
+          "gdm-password"
+          "gdm-autologin"
+          "sddm"
+          "sddm-autologin"
+          "lightdm"
+          "sshd"
+        ];
+        description = ''
+          PAM services whose session open marks a generation as validated
+          (last good). Entries for services that do not exist are inert.
         '';
       };
 
@@ -156,8 +208,8 @@ in
           message = "brainrotos.boot-validation.v1.attempts must be at least 1";
         }
         {
-          assertion = cfg.loginTimeoutSec >= 30;
-          message = "brainrotos.boot-validation.v1.loginTimeoutSec must be at least 30";
+          assertion = cfg.desktopGraceSec >= 30;
+          message = "brainrotos.boot-validation.v1.desktopGraceSec must be at least 30";
         }
         {
           assertion = !useGrub || config.boot.loader.grub.configurationLimit >= 2;
@@ -176,15 +228,48 @@ in
         "greenboot/greenboot.conf".text = ''
           GREENBOOT_MAX_BOOT_ATTEMPTS=${toString cfg.attempts}
         '';
-        "greenboot/check/required.d/10-user-login".source = greenbootHook "10-user-login" "login-watchdog";
-        "greenboot/green.d/10-record-last-good".source = greenbootHook "10-record-last-good" "on-success";
         "greenboot/red.d/10-fallback-reboot".source = greenbootHook "10-fallback-reboot" "on-fail";
       }
+      // (
+        if config.services.displayManager.enable then
+          {
+            # tier 1: desktop came up. greenboot marks boot_success=1 and
+            # clears the retry counter, so an unattended-but-working machine
+            # never accumulates failures
+            "greenboot/check/required.d/10-desktop-health".source =
+              greenbootHook "10-desktop-health" "desktop-health";
+          }
+        else
+          {
+            # no desktop to check; keep required.d non-empty so greenboot
+            # does not fail its runner. validation then only advances on
+            # hard hangs, and logins still record the last good generation
+            "greenboot/check/required.d/10-always-ok".source = pkgs.writeShellScript "10-always-ok" ''
+              # no display manager configured; nothing to check
+              exit 0
+            '';
+          }
+      )
       // listToAttrs (
         map (p: {
           name = "greenboot/check/required.d/50-${p.name}";
           value.source = p;
         }) cfg.extraRequiredChecks
+      );
+
+      # tier 2: a real login marks the generation as validated. runs at
+      # session open, root-owned so it can update the boot state; optional
+      # so this hook can never lock anyone out
+      security.pam.services = listToAttrs (
+        map (name: {
+          inherit name;
+          value.rules.session.brainrotos-boot-validation = {
+            order = 97;
+            control = "optional";
+            modulePath = "${config.security.pam.package}/lib/security/pam_exec.so";
+            args = [ "${pamLoginHook}" ];
+          };
+        }) cfg.validatedLogins
       );
 
       # greenboot writes its status motd on every boot
@@ -225,6 +310,8 @@ in
           pkgs.bash
           pkgs.coreutils
           pkgs.systemd
+          # greenboot shells out to findmnt/mount for its /boot rw handling
+          pkgs.util-linux
         ];
       };
 

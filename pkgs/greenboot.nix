@@ -3,6 +3,10 @@
   rustPlatform,
   grub2,
   lib,
+  # where greenboot keeps its state. must be /boot/grub/grubenv for grub
+  # systems (grub loads the env block from there), anything else for
+  # non-grub systems (the file is just greenboot's state store there)
+  grubenvPath ? "/boot/grub/grubenv",
 }:
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "greenboot";
@@ -19,12 +23,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
   # here (greenboot.Cargo.lock) for reproducible vendoring
   cargoLock.lockFile = ./greenboot.Cargo.lock;
 
-  # nixos: grub ships its env file at /boot/grub/grubenv and the tool is
-  # called grub-editenv, not grub2-editenv like on fedora
+  # nixos: the env file tool is called grub-editenv, not grub2-editenv
+  # like on fedora, and the state file path is configurable per system
   postPatch = ''
     cp ${./greenboot.Cargo.lock} Cargo.lock
     substituteInPlace src/lib/grub.rs \
-      --replace-fail "/boot/grub2/grubenv" "/boot/grub/grubenv" \
+      --replace-fail "/boot/grub2/grubenv" "${grubenvPath}" \
       --replace-fail "grub2-editenv" "grub-editenv"
   '';
 
