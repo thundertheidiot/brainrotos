@@ -129,6 +129,7 @@ prepare() {
     grubenv_unset boot_counter
     grubenv_unset bros_fallback_entry
     grubenv_unset bros_fallback_target
+    grubenv_unset bros_boot_entry
     grubenv_set bros_armed_gen "$gen"
     grubenv_set boot_counter "$ATTEMPTS"
     if [ "$BOOTLOADER" = "grub" ]; then
@@ -204,11 +205,27 @@ desktop_health() {
 }
 
 on_success() {
-  local gen
+  local gen target title
   gen=$(gen_number) || return 0
   grubenv_init
   grubenv_set bros_last_good_gen "$gen"
-  if [ "$BOOTLOADER" = "systemd-boot" ]; then
+  target=$(grubenv_get bros_fallback_target)
+  if [ -n "$target" ] && [ "$target" = "$gen" ]; then
+    # this is a rollback landing: keep steering to this generation across
+    # reboots - greenboot's success writes (boot_success=1, counter unset)
+    # would otherwise make the bootloader pick the broken newest one again
+    if [ "$BOOTLOADER" = "grub" ]; then
+      if title=$(grub_fallback_entry "$gen"); then
+        grubenv_set bros_boot_entry "$title"
+      else
+        fail "cannot compute grub entry for generation $gen; steering not updated"
+      fi
+    else
+      loader_set_default "$gen" || fail "cannot steer systemd-boot to generation $gen"
+    fi
+  elif [ "$BOOTLOADER" = "grub" ]; then
+    grubenv_unset bros_boot_entry
+  elif [ "$BOOTLOADER" = "systemd-boot" ]; then
     loader_clear_default
   fi
   log "generation $gen recorded as last good"
@@ -257,13 +274,77 @@ on_fail() {
   fi
 }
 
+rollback() {
+  # manually steer the next boot to a generation. stages only; the caller
+  # reboots when ready.
+  local gen target title
+  gen=$(gen_number) || {
+    fail "cannot determine system generation"
+    return 1
+  }
+  # called from the dispatcher as `rollback "$2"` - the target arrives as
+  # this function's first positional
+  target="${1:-}"
+  if [ -z "$target" ]; then
+    target=$(prev_gen "$gen")
+  fi
+  if [ -z "$target" ]; then
+    fail "no previous generation to roll back to"
+    return 1
+  fi
+  if [ ! -d "/nix/var/nix/profiles/system-$target-link" ]; then
+    fail "generation $target does not exist"
+    return 1
+  fi
+  if [ "$target" = "$gen" ]; then
+    fail "generation $target is the running generation"
+    return 1
+  fi
+  grubenv_init
+  if [ "$BOOTLOADER" = "grub" ]; then
+    title=$(grub_fallback_entry "$target") || {
+      fail "cannot compute grub entry for generation $target"
+      return 1
+    }
+    grubenv_set bros_boot_entry "$title"
+  else
+    loader_set_default "$target" || {
+      fail "cannot steer systemd-boot to generation $target"
+      return 1
+    }
+  fi
+  grubenv_set bros_fallback_target "$target"
+  log "steered boot to generation $target - reboot to apply"
+}
+
+reset_cycle() {
+  # clear validation state when a different generation is activated
+  # (nixos-rebuild switch/boot of a new gen): steering and counters from
+  # the old cycle must not survive. guarded by mountpoint in the caller -
+  # at boot time /boot may not be mounted yet and the prepare unit takes
+  # over.
+  local gen armed
+  gen=$(gen_number) || return 0
+  armed=$(grubenv_get bros_armed_gen)
+  if [ "$gen" != "$armed" ]; then
+    grubenv_unset boot_counter
+    grubenv_unset bros_armed_gen
+    grubenv_unset bros_fallback_entry
+    grubenv_unset bros_fallback_target
+    grubenv_unset bros_boot_entry
+    log "validation cycle reset for activated generation $gen"
+  fi
+}
+
 case "${1:-}" in
   prepare) prepare ;;
   desktop-health) desktop_health ;;
   on-success) on_success ;;
   on-fail) on_fail ;;
+  rollback) rollback "${2:-}" ;;
+  reset-cycle) reset_cycle ;;
   *)
-    fail "usage: brainrotos-boot-validation {prepare|desktop-health|on-success|on-fail}"
+    fail "usage: brainrotos-boot-validation {prepare|desktop-health|on-success|on-fail|rollback [gen]|reset-cycle}"
     exit 2
     ;;
 esac

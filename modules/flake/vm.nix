@@ -57,6 +57,15 @@
         VARS="$VM_DIR/OVMF_VARS.fd"
         MEM=4096
         CPUS=4
+        BIOS=false
+
+        while [ $# -gt 0 ]; do
+          case $1 in
+            --bios) BIOS=true ;;
+            *) echo "unknown option: $1" >&2; exit 1 ;;
+          esac
+          shift
+        done
 
         if [ ! -e "$DISK" ]; then
           echo "No disk image at $DISK" >&2
@@ -64,9 +73,16 @@
           exit 1
         fi
 
-        if [ ! -e "$VARS" ]; then
-          cp ${ovmf.variables} "$VARS"
-          chmod 0644 "$VARS"
+        PFLASH=()
+        if [ "$BIOS" != true ]; then
+          if [ ! -e "$VARS" ]; then
+            cp ${ovmf.variables} "$VARS"
+            chmod 0644 "$VARS"
+          fi
+          PFLASH=(
+            -drive "if=pflash,format=raw,readonly=on,file=${ovmf.firmware}"
+            -drive "if=pflash,format=raw,file=$VARS"
+          )
         fi
 
         exec ${qemu}/bin/qemu-system-x86_64 \
@@ -78,8 +94,7 @@
           -device virtio-net-pci,netdev=n0 \
           -netdev user,id=n0 \
           -drive "file=$DISK,if=virtio,format=qcow2,cache=writeback" \
-          -drive "if=pflash,format=raw,readonly=on,file=${ovmf.firmware}" \
-          -drive "if=pflash,format=raw,file=$VARS" \
+          "''${PFLASH[@]}" \
           -vga none \
           -device virtio-vga \
           -usb -device usb-tablet \
@@ -105,10 +120,12 @@
         DISK="$VM_DIR/disk.qcow2"
         SIZE="64G" # sparse, only occupies the space actually written to
         FORCE=false
+        BIOS=false
 
         while [ $# -gt 0 ]; do
           case $1 in
             --force) FORCE=true ;;
+            --bios) BIOS=true ;;
             *) echo "unknown option: $1" >&2; exit 1 ;;
           esac
           shift
@@ -155,7 +172,14 @@
         ${lib.getExe config.packages."vm-disk-setup"} "$NBD"
         udevadm settle
 
-        BRAINROTOS_TARGET_EFI=1 ${lib.getExe config.packages."quick-install"}
+        BRAINROTOS_TARGET_EFI=$([ "$BIOS" = true ] && echo 0 || echo 1) ${lib.getExe config.packages."quick-install"}
+
+        if [ "$BIOS" = true ]; then
+          # the installer ran against the nbd device on the host, but the
+          # vm attaches the disk as virtio vda; repoint grub so in-vm
+          # rebuilds install to the right disk
+          sed -i 's|/dev/nbd[0-9]\+|/dev/vda|g' /mnt/nix/osconfig/default.nix
+        fi
 
         umount /mnt/boot /mnt/nix
         sync

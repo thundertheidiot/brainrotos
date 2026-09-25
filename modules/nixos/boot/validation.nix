@@ -58,6 +58,11 @@ let
     in
     ''
       # brainrotos boot validation
+      # persistent steering (e.g. after a rollback landing): wins over
+      # everything below and over greenboot's success writes
+      if [ -n "''${bros_boot_entry}" ]; then
+        set default="''${bros_boot_entry}"
+      fi
       if [ -n "''${boot_counter}" -a "''${boot_success}" = "0" ]; then
         if [ "''${boot_counter}" = "0" -o "''${boot_counter}" = "-1" ]; then
           if [ -n "''${bros_fallback_entry}" ]; then
@@ -324,6 +329,24 @@ in
           "boot-complete.target"
         ];
       };
+
+      # manual escape hatch: stage a boot into a specific generation
+      environment.systemPackages = [
+        (pkgs.writeShellScriptBin "brainrotos-rollback" ''
+          exec ${bootValidation}/bin/brainrotos-boot-validation rollback "$@"
+        '')
+      ];
+
+      # switch-time cycle reset: steering for a rolled-back generation must
+      # not survive into the boot of a newly switched generation. guarded
+      # by mountpoint - early boot activation may run before /boot is
+      # mounted; the prepare unit covers that case.
+      system.activationScripts.brainrotosBootValidationReset =
+        lib.stringAfter [ "etc" ] ''
+          if ${pkgs.util-linux}/bin/mountpoint -q /boot; then
+            ${bootValidation}/bin/brainrotos-boot-validation reset-cycle || true
+          fi
+        '';
     })
 
     (mkIf (enabled && useGrub) {
