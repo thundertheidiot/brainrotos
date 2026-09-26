@@ -6,6 +6,8 @@
 # below) come from a per-bootloader library, sourced right after the
 # variables; only the library matching this system's bootloader is shipped.
 
+# greenboot reads grubenv, so state is stored in a grubenv file even on systemd-boot systems
+
 GRUBENV="${BRAINROTOS_GRUBENV:-@grubenv@}"
 # consumed by the per-bootloader library sourced below
 # shellcheck disable=SC2034
