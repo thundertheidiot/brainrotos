@@ -55,7 +55,7 @@ in
       set -e
 
       mkdir -p /mnt/boot /mnt/nix
-      mount /dev/disk/by-label/BROS_BOOT /mnt/boot
+      mount -o umask=0077 /dev/disk/by-label/BROS_BOOT /mnt/boot
       mount /dev/disk/by-label/bros-main -o subvol=@nix /mnt/nix
 
       # target firmware can be overridden when driving the installer from
@@ -76,6 +76,8 @@ in
             firefox.v1.enable = true;
             user.v1.name = "user";
           };
+
+          boot.loader.efi.canTouchEfiVariables = $([ "''${BRAINROTOS_EFI_VARIABLES:-1}" = "1" ] && echo true || echo false);
 
           $([ "$IS_EFI" = "false" ] && echo "boot.loader.grub.devices = [\"''${BRAINROTOS_GRUB_DEVICE:-$(lsblk -pno pkname /dev/disk/by-label/BROS_BOOT)}\"];")
 

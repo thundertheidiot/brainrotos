@@ -27,17 +27,29 @@ let
   useSystemdBoot = config.boot.loader.systemd-boot.enable;
   enabled = cfg.enable && (useGrub || useSystemdBoot);
 
-  # grub must find the env block at its prefix (/boot/grub/grubenv);
-  # on non-grub systems the path is arbitrary, it is only greenboot's
-  # state store
+  # Recovery state must be separate from grubenv used by old-generation hooks
+  # that may still run after a boot-mode rebuild. GRUB loads this file explicitly.
   grubenvFile =
-    if useGrub
-    then "/boot/grub/grubenv"
-    else "${config.boot.loader.efi.efiSysMountPoint}/greenboot.grubenv";
+    if useGrub then
+      "/boot/grub/brainrotos.grubenv"
+    else
+      "${config.boot.loader.efi.efiSysMountPoint}/brainrotos.grubenv";
+  legacyGrubenvFile =
+    if useGrub then
+      "/boot/grub/grubenv"
+    else
+      "${config.boot.loader.efi.efiSysMountPoint}/greenboot.grubenv";
   loaderConfFile = "${config.boot.loader.efi.efiSysMountPoint}/loader/loader.conf";
+  bootMountPoint =
+    if useSystemdBoot && config.boot.loader.systemd-boot.xbootldrMountPoint != null then
+      config.boot.loader.systemd-boot.xbootldrMountPoint
+    else
+      config.boot.loader.efi.efiSysMountPoint;
 
   greenboot = pkgs.callPackage ../../../pkgs/greenboot.nix {
-    grubenvPath = grubenvFile;
+    # Greenboot's writes describe this boot, not a future generation staged
+    # by nixos-rebuild while its checks are still running.
+    grubenvPath = "/run/brainrotos-boot-validation/greenboot.grubenv";
   };
 
   # grub has no arithmetic (nixpkgs does not carry fedora's increment
@@ -56,68 +68,48 @@ let
     in
     ''
       # brainrotos boot validation
-      # persistent steering (e.g. after a rollback landing): wins over
-      # everything below and over greenboot's success writes
+      # Ignore legacy hooks' variables loaded by the native GRUB header.
+      set bros_boot_entry=
+      set bros_candidate_entry=
+      set bros_fallback_entry=
+      set boot_counter=
+      set boot_success=
+      if [ -s $prefix/brainrotos.grubenv ]; then
+        load_env -f $prefix/brainrotos.grubenv
+      fi
+
+      # Explicit selections, including manual rollback, override counting.
       if [ -n "''${bros_boot_entry}" ]; then
         set default="''${bros_boot_entry}"
-      fi
-      if [ -n "''${boot_counter}" -a "''${boot_success}" = "0" ]; then
-        if [ "''${boot_counter}" = "0" -o "''${boot_counter}" = "-1" ]; then
-          if [ -n "''${bros_fallback_entry}" ]; then
-            set default="''${bros_fallback_entry}"
+      elif [ -n "''${bros_candidate_entry}" ]; then
+        set default="''${bros_candidate_entry}"
+        if [ -n "''${boot_counter}" -a "''${boot_success}" = "0" ]; then
+          if [ "''${boot_counter}" = "0" -o "''${boot_counter}" = "-1" ]; then
+            if [ -n "''${bros_fallback_entry}" ]; then
+              set default="''${bros_fallback_entry}"
+            fi
+            set boot_counter=-1
+          else
+            ${decrements}
           fi
-          set boot_counter=-1
-        else
-          ${decrements}
-          save_env boot_counter
+          save_env -f $prefix/brainrotos.grubenv boot_counter
         fi
-        save_env boot_counter
       fi
 
       # count this boot as not-yet-validated until userspace says otherwise
       set boot_success=0
-      save_env boot_success
+      save_env -f $prefix/brainrotos.grubenv boot_success
     '';
 
-  # per-bootloader function library, sourced by the shared core; only the
-  # one matching this system's bootloader is referenced (and shipped)
-  loaderLibSrc =
-    if useGrub
-    then ./boot-validation-grub.sh
-    else ./boot-validation-systemd-boot.sh;
-
-  loaderLib = pkgs.runCommand "boot-validation-loader-lib" {
-    nativeBuildInputs = [ pkgs.shellcheck ];
-    # variables and helper functions "unassigned" in the lib come from the
-    # shared core
-  } ''
-    install -Dm555 ${loaderLibSrc} $out
-    shellcheck --exclude=SC2154 $out
-  '';
-
-  # runtime helper; @var@ tokens in boot-validation.sh are substituted here
-  bootValidation = pkgs.writeShellApplication {
-    name = "brainrotos-boot-validation";
-    runtimeInputs = with pkgs; [
-      coreutils
-      gawk
-      gnugrep
-      gnused
-      grub2
-      systemd
-      util-linux
-    ];
-
-    text = lib.readFile (
-      pkgs.replaceVars ./boot-validation.sh {
-        inherit (cfg) attempts;
-        timeout = cfg.desktopGraceSec;
-        grubenv = grubenvFile;
-        loaderConf = loaderConfFile;
-        loaderLib = "${loaderLib}";
-      }
-    );
-
+  bootValidation = pkgs.callPackage ../../../pkgs/boot-validation.nix {
+    loader = if useGrub then "grub" else "systemd-boot";
+    inherit (cfg) attempts;
+    timeout = cfg.desktopGraceSec;
+    grubenv = grubenvFile;
+    legacyGrubenv = legacyGrubenvFile;
+    loaderConf = loaderConfFile;
+    entriesDir = "${bootMountPoint}/loader/entries";
+    inherit (config.system.nixos) distroName;
   };
 
   greenbootHook =
@@ -127,7 +119,7 @@ let
     '';
 
   # PAM session-open hook (pam_exec): a real user (uid >= 1000) logging in
-  # marks the generation validated. greeter/system users do not count and
+  # supplies the login half of validation. greeter/system users do not count and
   # session close is ignored. runs as root from the PAM stack.
   pamLoginHook = pkgs.writeShellScript "brainrotos-boot-validation-pam" ''
     if [ "''${PAM_TYPE:-}" != "open_session" ]; then
@@ -168,7 +160,9 @@ in
         default = 3;
         description = ''
           How many boots a broken generation gets before falling back to
-          the previous one (the first boot plus retries).
+          an installed last-good or previous generation (the first boot
+          plus retries). Kernel/initrd failures consume attempts on the
+          next restart; a hang still needs a watchdog or manual reset.
         '';
       };
 
@@ -196,8 +190,9 @@ in
           "sshd"
         ];
         description = ''
-          PAM services whose session open marks a generation as validated
-          (last good). Entries for services that do not exist are inert.
+          PAM services whose session open, together with successful required
+          health checks, marks a generation as last good. Login may precede
+          or follow the health checks. Entries for absent services are inert.
         '';
       };
 
@@ -241,15 +236,11 @@ in
         "greenboot/greenboot.conf".text = ''
           GREENBOOT_MAX_BOOT_ATTEMPTS=${toString cfg.attempts}
         '';
-        # tier 1: desktop came up. greenboot marks boot_success=1 and
-        # clears the retry counter, so an unattended-but-working machine
-        # never accumulates failures
+        # Machine health stops retries even without a login. Last-good
+        # promotion also requires a real login, in either event order.
         "greenboot/check/required.d/10-desktop-health".source =
           greenbootHook "10-desktop-health" "desktop-health";
-        # tier 1 success hook: re-asserts fallback steering before
-        # greenboot clears the boot counter
-        "greenboot/green.d/10-fallback-steer".source =
-          greenbootHook "10-fallback-steer" "on-green";
+        "greenboot/green.d/10-fallback-steer".source = greenbootHook "10-fallback-steer" "on-green";
         "greenboot/red.d/10-fallback-reboot".source = greenbootHook "10-fallback-reboot" "on-fail";
       }
       // listToAttrs (
@@ -259,7 +250,7 @@ in
         }) cfg.extraRequiredChecks
       );
 
-      # tier 2: a real login marks the generation as validated. runs at
+      # tier 2: a real login completes validation after successful checks. runs at
       # session open, root-owned so it can update the boot state; optional
       # so this hook can never lock anyone out
       security.pam.services = listToAttrs (
@@ -281,7 +272,12 @@ in
         description = "BrainrotOS Boot Validation Prepare";
         wantedBy = [ "multi-user.target" ];
         before = [ "greenboot-healthcheck.service" ];
-        unitConfig.RequiresMountsFor = [ "/boot" ];
+        unitConfig.RequiresMountsFor = [
+          "/boot"
+          bootMountPoint
+          config.boot.loader.efi.efiSysMountPoint
+        ];
+        restartIfChanged = false;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
@@ -298,6 +294,7 @@ in
         description = "Kick off Greenboot Health Checks without blocking boot";
         wantedBy = [ "multi-user.target" ];
         after = [ "brainrotos-boot-prepare.service" ];
+        requires = [ "brainrotos-boot-prepare.service" ];
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
@@ -312,8 +309,11 @@ in
         requiredBy = [ "boot-complete.target" ];
         before = [ "boot-complete.target" ];
         after = [ "brainrotos-boot-prepare.service" ];
+        requires = [ "brainrotos-boot-prepare.service" ];
         unitConfig.RequiresMountsFor = [
           "/boot"
+          bootMountPoint
+          config.boot.loader.efi.efiSysMountPoint
           "/etc"
         ];
         serviceConfig = {
@@ -355,26 +355,22 @@ in
 
     })
 
-    # cycle reset at bootloader-update time: when a newer generation is
-    # activated (switch AND boot), steering for a rolled-back generation
-    # must be cleared, or the boot after a rebuild would go to the stale
-    # fallback. this is the only hook that fires in both switch and boot
-    # modes - activation scripts miss boot mode, and the prepare unit
-    # misses the reboot right after a boot-mode rebuild.
+    # Stage AFTER installing entries, protecting the very first boot and
+    # covering both switch and boot modes. Do not suppress staging errors.
     (mkIf (enabled && useGrub) {
       boot.loader.grub.extraConfig = grubCountingSnippet;
-      boot.loader.grub.extraPrepareConfig = ''
-        if ${pkgs.util-linux}/bin/mountpoint -q /boot; then
-          ${bootValidation}/bin/brainrotos-boot-validation reset-cycle || true
-        fi
+      boot.loader.grub.extraInstallCommands = ''
+        ${bootValidation}/bin/brainrotos-boot-validation stage "$1"
       '';
     })
 
     (mkIf (enabled && useSystemdBoot) {
+      # The generator normally pulls blessing into basic.target. Only our
+      # successful required checks may finish a counted trial.
+      systemd.services.systemd-bless-boot.enable = false;
+      systemd.generators.systemd-bless-boot-generator = "/dev/null";
       boot.loader.systemd-boot.extraInstallCommands = ''
-        if ${pkgs.util-linux}/bin/mountpoint -q ${config.boot.loader.efi.efiSysMountPoint}; then
-          ${bootValidation}/bin/brainrotos-boot-validation reset-cycle || true
-        fi
+        ${bootValidation}/bin/brainrotos-boot-validation stage "$1"
       '';
     })
   ];

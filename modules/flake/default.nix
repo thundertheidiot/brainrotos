@@ -15,6 +15,11 @@
 
   perSystem = {pkgs, ...}: {
     packages.greenboot = pkgs.callPackage ../../pkgs/greenboot.nix {};
+    packages.boot-validation = pkgs.callPackage ../../pkgs/boot-validation.nix {};
+    checks.boot-validation = import ../../tests/boot-validation.nix {inherit pkgs;};
+    devShells.default = pkgs.mkShell {
+      packages = [pkgs.python3 pkgs.shellcheck pkgs.nixfmt];
+    };
   };
 
   flake.nixosConfigurations = let

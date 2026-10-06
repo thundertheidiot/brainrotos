@@ -227,7 +227,7 @@ EOF
         ${lib.getExe config.packages."vm-disk-setup"} "$NBD"
         udevadm settle
 
-        BRAINROTOS_TARGET_EFI=$([ "$BIOS" = true ] && echo 0 || echo 1) ${lib.getExe config.packages."quick-install"}
+        BRAINROTOS_EFI_VARIABLES=0 BRAINROTOS_TARGET_EFI=$([ "$BIOS" = true ] && echo 0 || echo 1) ${lib.getExe config.packages."quick-install"}
 
         if [ "$BIOS" = true ]; then
           # the installer ran against the nbd device on the host, but the
