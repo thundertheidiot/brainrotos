@@ -32,6 +32,19 @@
 
     ovmf = pkgs.OVMF.fd;
     qemu = pkgs.qemu;
+
+    # qemu's gtk frontend needs a display server, fall back to a serial
+    # console when the script is run from a headless environment (tty, ssh)
+    qemuDisplayArgs = ''
+        if [ -n "''${QEMU_DISPLAY:-}" ]; then
+          DISPLAY_ARGS=(-display "$QEMU_DISPLAY")
+        elif [ -n "''${WAYLAND_DISPLAY:-}" ] || [ -n "''${DISPLAY:-}" ]; then
+          DISPLAY_ARGS=(-display gtk)
+        else
+          echo "No display server found, falling back to serial console" >&2
+          DISPLAY_ARGS=(-display none -serial mon:stdio)
+        fi
+    '';
   in {
     packages.vm = pkgs.writeShellApplication {
       name = "vm";
@@ -41,7 +54,9 @@
         MEM=4096
         CPUS=4
 
-        export QEMU_OPTS="-display gtk -vga none -device virtio-vga -m $MEM -smp $CPUS"
+        ${qemuDisplayArgs}
+
+        export QEMU_OPTS="''${DISPLAY_ARGS[*]} -vga none -device virtio-vga -m $MEM -smp $CPUS"
         exec ${vmTest.system.build.vm}/bin/run-${vmTest.system.name}-vm
       '';
     };
@@ -69,6 +84,8 @@
           chmod 0644 "$VARS"
         fi
 
+        ${qemuDisplayArgs}
+
         exec ${qemu}/bin/qemu-system-x86_64 \
           -machine q35,accel=kvm:tcg \
           -cpu max \
@@ -83,7 +100,7 @@
           -vga none \
           -device virtio-vga \
           -usb -device usb-tablet \
-          -display gtk
+          "''${DISPLAY_ARGS[@]}"
       '';
     };
 
