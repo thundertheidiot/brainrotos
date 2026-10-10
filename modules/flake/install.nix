@@ -55,7 +55,7 @@ in
       set -e
 
       mkdir -p /mnt/boot /mnt/nix
-      mount /dev/disk/by-label/BROS_BOOT /mnt/boot
+      mount -o umask=0077 /dev/disk/by-label/BROS_BOOT /mnt/boot
       mount /dev/disk/by-label/bros-main -o subvol=@nix /mnt/nix
 
       # target firmware can be overridden when driving the installer from
@@ -77,7 +77,15 @@ in
             user.v1.name = "user";
           };
 
+          boot.loader.efi.canTouchEfiVariables = $([ "''${BRAINROTOS_EFI_VARIABLES:-1}" = "1" ] && echo true || echo false);
+
           $([ "$IS_EFI" = "false" ] && echo "boot.loader.grub.devices = [\"''${BRAINROTOS_GRUB_DEVICE:-$(lsblk -pno pkname /dev/disk/by-label/BROS_BOOT)}\"];")
+
+          # test vm: ssh in to push generations
+          services.openssh.enable = true;
+          services.openssh.settings.PermitRootLogin = "yes";
+          services.openssh.settings.PasswordAuthentication = true;
+          users.users.root.initialPassword = "password123";
 
           networking.hostName = "brainrotos";
           nixpkgs.hostPlatform = {system = "x86_64-linux";};

@@ -29,6 +29,7 @@ in {
       "/boot" = {
         label = mkDefault "BROS_BOOT";
         fsType = "vfat";
+        options = ["umask=0077"];
       };
       "/nix" = {
         label = mkDefault "bros-main";

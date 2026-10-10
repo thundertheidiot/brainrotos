@@ -10,7 +10,18 @@
       flatpak.v1.enable = true;
       gpu.v1.type = "intel";
       user.v1.name = "test";
+      boot-validation.v1.desktopGraceSec = 60;
     };
+
+    # test vm convenience: ssh in to push generations
+    services.openssh = {
+      enable = true;
+      settings = {
+        PermitRootLogin = "yes";
+        PasswordAuthentication = true;
+      };
+    };
+    users.users.root.initialPassword = "password123";
 
     nixpkgs.hostPlatform = {
       system = "x86_64-linux";
