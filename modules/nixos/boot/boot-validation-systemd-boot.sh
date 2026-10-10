@@ -3,28 +3,44 @@
 # its native boot count is exhausted, then the exact snapshotted fallback.
 
 loader_entry() {
-  local gen="${1%%/*}" system entry init boot_root payload
+  local system entry init boot_root payload hash bare="" counted=""
   system=$(generation_system "$1") || return 1
   [ -d "$system" ] || return 1
-  entry="$ENTRIES_DIR/nixos-generation-$gen"
-  if [[ "$1" = */* ]]; then
-    entry+="-specialisation-${1#*/}"
-  fi
-  entry+=".conf"
-  [ -f "$entry" ] || return 1
-  # Check the closure identity, not just the filename left by an old install.
   init=$(readlink -e "$system/init") || return 1
-  awk -v init="init=$init" '
-    $1 == "options" { for (i = 2; i <= NF; i++) if ($i == init) found = 1 }
-    $1 == "linux" && NF == 2 { kernel = 1 }
-    $1 == "initrd" && NF == 2 { initrd = 1 }
-    END { exit !(found && kernel && initrd) }
-  ' "$entry" || return 1
   boot_root=$(dirname "$(dirname "$ENTRIES_DIR")")
-  while IFS= read -r payload; do
-    case "$payload" in /*) ;; *) return 1 ;; esac
-    [ -f "$boot_root$payload" ] || return 1
-  done < <(awk '$1 == "linux" || $1 == "initrd" || $1 == "devicetree" { print $2 }' "$entry")
+  for entry in "$ENTRIES_DIR"/nixos-*.conf; do
+    [ -f "$entry" ] || break
+    # Entries are content-addressed (nixos-<sha256>[+N-M].conf) and shared by
+    # closures with identical boot configuration. Like the native builder,
+    # ignore files whose content no longer matches the hash in their name.
+    hash=${entry##*/}
+    hash=${hash#nixos-}
+    hash=${hash%.conf}
+    hash=${hash%%+*}
+    [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || continue
+    [ "$(sha256sum "$entry" | awk '{print $1}')" = "$hash" ] || continue
+    # Check the closure identity, not just the filename left by an old install.
+    awk -v init="init=$init" '
+      $1 == "options" { for (i = 2; i <= NF; i++) if ($i == init) matched = 1 }
+      $1 == "linux" && NF == 2 { kernel = 1 }
+      $1 == "initrd" && NF == 2 { initrd = 1 }
+      END { exit !(matched && kernel && initrd) }
+    ' "$entry" || continue
+    while IFS= read -r payload; do
+      case "$payload" in /*) ;; *) return 1 ;; esac
+      [ -f "$boot_root$payload" ] || return 1
+    done < <(awk '$1 == "linux" || $1 == "initrd" || $1 == "devicetree" { print $2 }' "$entry")
+    # Prefer the uncounted entry; counted variants share its content.
+    case "${entry##*/}" in
+      *+*) counted=${counted:-$entry} ;;
+      *)
+        bare=$entry
+        break
+        ;;
+    esac
+  done
+  entry=${bare:-$counted}
+  [ -n "$entry" ] || return 1
   echo "$entry"
 }
 
@@ -36,7 +52,7 @@ loader_set_default() {
   local default="$1" tmp
   [ -f "$LOADER_CONF" ] || return 1
   tmp=$(mktemp "${LOADER_CONF}.XXXXXX") || return 1
-  if ! sed '/^default[[:space:]]/d; /# brainrotos boot validation/d; /# brainrotos boot recovery/d' "$LOADER_CONF" > "$tmp" ||
+  if ! sed '/^default[[:space:]]/d; /^preferred[[:space:]]/d; /# brainrotos boot validation/d; /# brainrotos boot recovery/d' "$LOADER_CONF" > "$tmp" ||
     ! printf '# brainrotos boot recovery\ndefault %s\n' "$default" >> "$tmp"; then
     rm -f "$tmp"
     return 1
@@ -113,9 +129,14 @@ loader_prepare() {
 }
 
 loader_steer() {
-  local entry
+  local entry id
   entry=$(loader_entry "$1") || return 1
-  loader_set_default "${entry##*/}"
+  id=${entry##*/}
+  id=${id%.conf}
+  id=${id%%+*}
+  # Match as a glob so boot-counting suffixes renamed into the file name by
+  # systemd-boot cannot break an exact selection.
+  loader_set_default "$id*.conf"
 }
 
 loader_finish() {

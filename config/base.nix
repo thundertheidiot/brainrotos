@@ -1,7 +1,9 @@
-{lib, ...}: let
+{ lib, ... }:
+let
   inherit (lib) mkDefault;
-in {
-  imports = [<brainrotos>];
+in
+{
+  imports = [ <brainrotos> ];
 
   config = {
     brainrotos = {
@@ -11,6 +13,9 @@ in {
       flatpak.v1.enable = mkDefault true;
     };
 
-    # systemd.services.display-manager.serviceConfig.ExecStart = lib.mkForce "/run/current-system/sw/bin/false";
+    environment.etc."test".text = "4";
+
+    # systemd.services.display-manager.serviceConfig.ExecStart =
+    #   lib.mkForce "/run/current-system/sw/bin/false";
   };
 }

@@ -6,6 +6,7 @@
 }:
 let
   inherit (lib)
+    mkDefault
     mkIf
     mkMerge
     concatStringsSep
@@ -230,6 +231,11 @@ in
             || config.boot.loader.systemd-boot.configurationLimit >= 2;
           message = "boot.loader.systemd-boot.configurationLimit must keep at least 2 generations for boot validation fallback";
         }
+        {
+          assertion =
+            !useSystemdBoot || !config.boot.loader.systemd-boot.bootCounting.enable;
+          message = "systemd-boot bootCounting must stay disabled; boot validation tracks attempts itself with counted alias entries";
+        }
       ];
 
       environment.etc = {
@@ -369,6 +375,9 @@ in
       # successful required checks may finish a counted trial.
       systemd.services.systemd-bless-boot.enable = false;
       systemd.generators.systemd-bless-boot-generator = "/dev/null";
+      # nixpkgs boot counting would run a second, unblessed assessment on the
+      # real entries alongside the counted aliases used below.
+      boot.loader.systemd-boot.bootCounting.enable = mkDefault false;
       boot.loader.systemd-boot.extraInstallCommands = ''
         ${bootValidation}/bin/brainrotos-boot-validation stage "$1"
       '';
