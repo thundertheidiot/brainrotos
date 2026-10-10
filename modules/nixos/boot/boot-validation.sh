@@ -7,6 +7,7 @@ STATE_DIR="${BRAINROTOS_STATE_DIR:-/run/brainrotos-boot-validation}"
 HEALTH_ENV="$STATE_DIR/greenboot.grubenv"
 PROFILES_DIR="${BRAINROTOS_PROFILES_DIR:-/nix/var/nix/profiles}"
 BOOTED_SYSTEM="${BRAINROTOS_BOOTED_SYSTEM:-/run/booted-system}"
+CMDLINE="${BRAINROTOS_CMDLINE:-/proc/cmdline}"
 GCROOT="${BRAINROTOS_GCROOT:-/nix/var/nix/gcroots/brainrotos-last-good}"
 # shellcheck disable=SC2034
 LOADER_CONF="${BRAINROTOS_LOADER_CONF:-@loaderConf@}"
@@ -142,6 +143,7 @@ arm_cycle() {
   grubenv_set bros_armed_gen "$gen" || return 1
   grubenv_set bros_fallback_target "$target" || return 1
   grubenv_unset bros_manual_target || return 1
+  grubenv_unset bros_notice_consumed || return 1
   grubenv_set boot_success 0 || return 1
   grubenv_set boot_counter "$remaining" || return 1
   log "armed generation $gen ($remaining attempts remaining, fallback: ${target:-none})"
@@ -174,11 +176,19 @@ stage() {
 }
 
 prepare() {
-  local gen armed counter target manual
+  local gen armed counter target manual reason=""
   gen=$(gen_number) || return 1
   armed=$(grubenv_get bros_armed_gen)
   target=$(grubenv_get bros_fallback_target)
   manual=$(grubenv_get bros_manual_target)
+  # The loader marks its actual recovery selection, not arbitrary menu boots.
+  # Consume only after landing; interrupted boots must still report recovery.
+  if [ "$(grubenv_get bros_notice_consumed)" != 1 ]; then
+    case " $(cat "$CMDLINE") " in
+      *" brainrotos.rollback=manual "*) [ "$gen" != "$manual" ] || reason=manual ;;
+      *" brainrotos.rollback=automatic "*) [ "$gen" != "$target" ] || reason=automatic ;;
+    esac
+  fi
   # Snapshot Greenboot's budget for THIS boot. Its status writes must not
   # modify a newer cycle staged while this system is running.
   grub-editenv "$HEALTH_ENV" create
@@ -201,6 +211,12 @@ prepare() {
   fi
   grub-editenv "$HEALTH_ENV" set "boot_counter=$counter" boot_success=0
   grubenv_get bros_armed_gen > "$STATE_DIR/boot-cycle"
+  if [ -n "$reason" ]; then
+    printf 'BrainrotOS boot recovery (%s): now running generation %s.\n' "$reason" "$gen" > "$STATE_DIR/rollback-notice.tmp"
+    chmod 0644 "$STATE_DIR/rollback-notice.tmp"
+    mv "$STATE_DIR/rollback-notice.tmp" "$STATE_DIR/rollback-notice"
+    grubenv_set bros_notice_consumed 1
+  fi
 }
 
 desktop_health() {
@@ -305,6 +321,7 @@ on_fail() {
     fail "cannot select fallback generation $target; manual intervention required"
     return 0
   }
+  loader_recovery_notice "$target" automatic || fail "fallback notice unavailable; continuing recovery"
   log "validation exhausted for generation $gen; rebooting into generation $target"
   if [ -z "${BRAINROTOS_BOOT_VALIDATION_DRY_RUN:-}" ]; then
     systemd-run --on-active=15 --unit=brainrotos-fallback-reboot systemctl reboot
@@ -321,6 +338,8 @@ rollback() {
     return 1
   fi
   loader_steer "$target" || return 1
+  loader_recovery_notice "$target" manual || return 1
+  grubenv_unset bros_notice_consumed || return 1
   grubenv_set bros_manual_target "$target"
   grubenv_set bros_fallback_target "$target"
   log "steered next boot to generation $target; reboot to apply"
@@ -332,6 +351,8 @@ case "${1:-}" in
   prepare | on-success | on-green | on-fail | rollback | stage)
     umask 077
     mkdir -p "$STATE_DIR"
+    # Only the public notice is readable; all other state remains private.
+    chmod 0711 "$STATE_DIR"
     exec 9> "$STATE_DIR/lock"
     flock 9
     grubenv_init

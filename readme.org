@@ -158,3 +158,5 @@ end-to-end test path (pass =--bios= to its install and launch commands for GRUB)
   - [ ] amd
   - [ ] nvidia
   - [ ] intel
+- [X] boot validation
+  - [ ] get rid of greenboot

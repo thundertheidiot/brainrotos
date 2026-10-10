@@ -103,6 +103,10 @@ loader_finish() {
   loader_steer "$1"
 }
 
+loader_recovery_notice() {
+  : # The GRUB snippet marks the explicit selection on the next boot.
+}
+
 loader_disarm() {
   loader_steer "$1" || return 1
   loader_cleanup

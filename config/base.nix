@@ -12,10 +12,5 @@ in
       ramcache.v1.enable = mkDefault true;
       flatpak.v1.enable = mkDefault true;
     };
-
-    environment.etc."test".text = "4";
-
-    # systemd.services.display-manager.serviceConfig.ExecStart =
-    #   lib.mkForce "/run/current-system/sw/bin/false";
   };
 }

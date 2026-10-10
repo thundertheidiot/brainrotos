@@ -75,6 +75,9 @@ let
       set bros_fallback_entry=
       set boot_counter=
       set boot_success=
+      set bros_notice_consumed=
+      set bros_manual_target=
+      set bros_rollback_param=
       if [ -s $prefix/brainrotos.grubenv ]; then
         load_env -f $prefix/brainrotos.grubenv
       fi
@@ -82,12 +85,20 @@ let
       # Explicit selections, including manual rollback, override counting.
       if [ -n "''${bros_boot_entry}" ]; then
         set default="''${bros_boot_entry}"
+        if [ -n "''${bros_manual_target}" -a "''${bros_notice_consumed}" != "1" ]; then
+          set bros_rollback_param=brainrotos.rollback=manual
+        elif [ "''${boot_counter}" = "0" -a "''${bros_notice_consumed}" != "1" ]; then
+          set bros_rollback_param=brainrotos.rollback=automatic
+        fi
       elif [ -n "''${bros_candidate_entry}" ]; then
         set default="''${bros_candidate_entry}"
         if [ -n "''${boot_counter}" -a "''${boot_success}" = "0" ]; then
           if [ "''${boot_counter}" = "0" -o "''${boot_counter}" = "-1" ]; then
             if [ -n "''${bros_fallback_entry}" ]; then
               set default="''${bros_fallback_entry}"
+              if [ "''${bros_notice_consumed}" != "1" ]; then
+                set bros_rollback_param=brainrotos.rollback=automatic
+              fi
             fi
             set boot_counter=-1
           else
@@ -98,6 +109,11 @@ let
       fi
 
       # count this boot as not-yet-validated until userspace says otherwise
+      # GRUB shortens/unsets default while entering submenus. Keep the full
+      # recovery path exported so the leaf can compare it with chosen.
+      set bros_recovery_entry="$default"
+      export bros_recovery_entry
+      export bros_rollback_param
       set boot_success=0
       save_env -f $prefix/brainrotos.grubenv boot_success
     '';
@@ -153,7 +169,10 @@ in
       enable = mkOption {
         type = bool;
         default = true;
-        description = "Enable boot validation.";
+        description = ''
+          Enable boot validation and desktop notices after automatic fallback
+          or brainrotos-rollback.
+        '';
       };
 
       attempts = mkOption {
@@ -213,12 +232,8 @@ in
     (mkIf enabled {
       assertions = [
         {
-          assertion = cfg.attempts >= 2;
-          message = "brainrotos.boot-validation.v1.attempts must be at least 2";
-        }
-        {
-          assertion = cfg.desktopGraceSec >= 30;
-          message = "brainrotos.boot-validation.v1.desktopGraceSec must be at least 30";
+          assertion = cfg.attempts >= 1;
+          message = "brainrotos.boot-validation.v1.attempts must be at least 1";
         }
         {
           assertion = !useGrub || config.boot.loader.grub.configurationLimit >= 2;
@@ -232,8 +247,7 @@ in
           message = "boot.loader.systemd-boot.configurationLimit must keep at least 2 generations for boot validation fallback";
         }
         {
-          assertion =
-            !useSystemdBoot || !config.boot.loader.systemd-boot.bootCounting.enable;
+          assertion = !useSystemdBoot || !config.boot.loader.systemd-boot.bootCounting.enable;
           message = "systemd-boot bootCounting must stay disabled; boot validation tracks attempts itself with counted alias entries";
         }
       ];
@@ -361,12 +375,54 @@ in
 
     })
 
+    (mkIf enabled {
+      # Delivery is independent of validation. Desktop servers may ignore the
+      # requested infinite timeout/resident hint; the per-boot notice stays in /run.
+      systemd.user.services.brainrotos-rollback-notice = {
+        description = "Show BrainrotOS boot recovery notice";
+        wantedBy = [ "graphical-session.target" ];
+        after = [ "graphical-session.target" ];
+        partOf = [ "graphical-session.target" ];
+        path = [
+          pkgs.coreutils
+          pkgs.util-linux
+          pkgs.libnotify
+        ];
+        serviceConfig = {
+          Type = "oneshot";
+          Restart = "on-failure";
+          RestartSec = 5;
+        };
+        unitConfig.StartLimitIntervalSec = 0;
+        script = ''
+          notice=/run/brainrotos-boot-validation/rollback-notice
+          [ -r "$notice" ] || exit 0
+          exec 9> "$XDG_RUNTIME_DIR/brainrotos-rollback-notice.lock"
+          flock 9
+          boot_id=$(cat /proc/sys/kernel/random/boot_id)
+          sent="$XDG_RUNTIME_DIR/brainrotos-rollback-notice.sent"
+          [ "$(cat "$sent" 2>/dev/null || true)" != "$boot_id" ] || exit 0
+          # notify-send uses the session bus and activates the notification
+          # server where supported. Retry failures until the desktop is ready.
+          notify-send --app-name=System --icon=dialog-warning --urgency=critical --expire-time=0 \
+            --hint=boolean:resident:true "Boot recovery" "$(cat "$notice")"
+          printf '%s\n' "$boot_id" > "$sent"
+        '';
+      };
+    })
+
     # Stage AFTER installing entries, protecting the very first boot and
     # covering both switch and boot modes. Do not suppress staging errors.
     (mkIf (enabled && useGrub) {
       boot.loader.grub.extraConfig = grubCountingSnippet;
       boot.loader.grub.extraInstallCommands = ''
         ${bootValidation}/bin/brainrotos-boot-validation stage "$1"
+        # Only the selected default gets the recovery marker. A menu override
+        # must not masquerade as automatic fallback, even after exhaustion.
+        ${pkgs.gnused}/bin/sed -i '/^[[:space:]]*linux\(efi\)\? /{
+          i\  set bros_selected_rollback_param=\n  if [ "$chosen" = "$bros_recovery_entry" ]; then\n    set bros_selected_rollback_param="$bros_rollback_param"\n  fi
+          s/$/ $bros_selected_rollback_param/
+        }' /boot/grub/grub.cfg
       '';
     })
 

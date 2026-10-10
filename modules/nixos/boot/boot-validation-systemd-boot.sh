@@ -94,6 +94,7 @@ loader_arm() {
   fallback=$(loader_entry "$2") || return 1
   loader_cleanup || return 1
   loader_write_alias "$fallback" "$ENTRIES_DIR/brainrotos-validation-fallback.conf" brainrotos-validation-1 || return 1
+  sed -i '/^options /s/$/ brainrotos.rollback=automatic/' "$ENTRIES_DIR/brainrotos-validation-fallback.conf" || return 1
   loader_write_alias "$candidate" "$ENTRIES_DIR/brainrotos-validation-candidate+$3.conf" brainrotos-validation-0 || return 1
   loader_set_default 'brainrotos-validation-*.conf'
 }
@@ -110,6 +111,9 @@ loader_resume() {
     fail "pending systemd-boot counting entries are missing; refusing to reset the budget"
     return 1
   fi
+  # Explicit recovery aliases must not outrank the candidate when a rebuild
+  # resumes its counted default glob.
+  rm -f "$ENTRIES_DIR/brainrotos-validation-manual.conf" "$ENTRIES_DIR/brainrotos-validation-automatic.conf" || return 1
   loader_set_default 'brainrotos-validation-*.conf'
 }
 
@@ -130,6 +134,12 @@ loader_prepare() {
 
 loader_steer() {
   local entry id
+  if [ "$(grubenv_get bros_manual_target)" = "$1" ] &&
+    [ "$(grubenv_get bros_notice_consumed)" != 1 ] &&
+    [ -f "$ENTRIES_DIR/brainrotos-validation-manual.conf" ]; then
+    loader_set_default brainrotos-validation-manual.conf
+    return
+  fi
   entry=$(loader_entry "$1") || return 1
   id=${entry##*/}
   id=${id%.conf}
@@ -142,6 +152,15 @@ loader_steer() {
 loader_finish() {
   loader_steer "$1" || return 1
   loader_cleanup
+}
+
+loader_recovery_notice() {
+  local entry
+  entry=$(loader_entry "$1") || return 1
+  loader_write_alias "$entry" "$ENTRIES_DIR/brainrotos-validation-$2.conf" "brainrotos-validation-$2" || return 1
+  sed -i "/^options /s/$/ brainrotos.rollback=$2/" "$ENTRIES_DIR/brainrotos-validation-$2.conf" || return 1
+  sync "$ENTRIES_DIR/brainrotos-validation-$2.conf"
+  loader_set_default "brainrotos-validation-$2.conf"
 }
 
 loader_disarm() {
