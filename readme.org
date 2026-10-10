@@ -2,6 +2,12 @@
 
 Work in progress proof of concept for a user friendly "immutable" distribution like Bazzite, but based on NixOS. 
 
+** AI disclaimer
+
+This repo is partially slop now, welcome to =$(date +%Y)=. I believe the quality and quantity of features will be higher with AI assistance, either way you shouldn't be running this on a real machine right now anyway.
+
+Readme is mine.
+
 ** Rough plan
 
 This repository defines nix options, e.g. =brainrotos.firefox.v1.enable=, which correspond to NixOS configuration, like enabling firefox in this case.
@@ -108,47 +114,6 @@ nix run .#vm-installed       # boot it, UEFI, state persists across reboots
 =vm-install= runs the installer (=vm-disk-setup= + =quick-install=) against a sparse qcow2 image through =qemu-nbd=, so the image only occupies the space actually used. Pass =--force= to recreate an existing image.
 
 =vm-installed= boots the installed system.
-
-** Boot validation
-
-Boot validation is enabled by default with GRUB and systemd-boot. Bootloader
-updates stage the new generation with three attempts and an installed fallback
-before the first reboot. GRUB counts attempts in its menu; systemd-boot uses
-counted BLS entries. Kernel and initrd failures therefore consume attempts even
-when userspace does not start. A hang still needs a watchdog or manual reset.
-
-Required checks wait for the graphical target and display manager, plus any
-=brainrotos.boot-validation.v1.extraRequiredChecks=. Passing all checks stops
-retries, including on an unattended machine. A qualifying PAM login, before or
-after the checks, also records the booted generation as last good and protects
-its system closure from garbage collection. Greenboot's status is kept separately
-from staged next-boot state, so rebuilding during a check does not cancel a trial.
-
-Fallback selection prefers an installed last-good entry, otherwise the newest
-installed predecessor. Retaining a profile or its closure is not enough: a
-=configurationLimit= can prune its boot entry. Missing entries are excluded. If
-no installed fallback exists, failed checks report the problem without automatic
-reboots. A fallback landing stays selected until another generation is staged.
-
-Manual rollback stages an installed generation without rebooting immediately:
-
-#+begin_src shell
-sudo brainrotos-rollback           # select the fallback
-sudo brainrotos-rollback 12        # select generation 12
-sudo brainrotos-rollback 12/rescue # select a specialisation
-sudo systemctl reboot
-#+end_src
-
-Run the regression checks with:
-
-#+begin_src shell
-nix build 'path:.#checks.x86_64-linux.boot-validation' --no-link -L
-#+end_src
-
-The checks exercise both helpers and the generated GRUB counting logic, with
-temporary profiles and boot entries. They model systemd-boot's counting and
-selection rules; they are not firmware boot tests. The installed VM remains the
-end-to-end test path (pass =--bios= to its install and launch commands for GRUB).
 
 * TODOs
 

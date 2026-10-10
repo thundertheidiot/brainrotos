@@ -1,3 +1,7 @@
+# Readme
+
+Never ever touch the readme file.
+
 # Style guide
 
 Import library functions at the top in a let in block, as if it's an import statement. Like this:
