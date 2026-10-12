@@ -4,7 +4,7 @@ Work in progress proof of concept for a user friendly "immutable" distribution l
 
 ** AI disclaimer
 
-This repo is partially slop now, welcome to =$(date +%Y)=. I believe the quality and quantity of features will be higher with AI assistance, either way you shouldn't be running this on a real machine right now anyway.
+This repo is partially slop now, welcome to =$(date +%Y)=. I believe the quality and quantity of features will be higher with AI assistance, either way you shouldn't be running this on a real machine right now anyway. 
 
 Readme is mine.
 

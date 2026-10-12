@@ -45,6 +45,13 @@
       name = getName.${v} n;
       value = inputs.nixpkgs.lib.nixosSystem {
         modules = [
+          ({ pkgs, ... }: {
+            # i'm sorry isabel
+            _module.args.multiverse = inputs.multiverse.lib.mkMultiverse {
+              system = pkgs.stdenv.hostPlatform.system;
+              fastFallback = "eval";
+            };
+          })
           "${inputs.self.outPath}/modules/nixos"
           "${inputs.self.outPath}/config/${n}"
           inputs.nix-flatpak.nixosModules.nix-flatpak

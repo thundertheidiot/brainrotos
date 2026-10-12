@@ -1,0 +1,3 @@
+* Multiverse Graphics Adapter
+
+Inject a modern glibc and load your real graphics drivers into ancient applications
