@@ -21,7 +21,6 @@ patched=0
 rewritten=0
 while IFS= read -r -d "" file; do
     if [ -n "$(patchelf --print-interpreter "$file" 2>/dev/null)" ]; then
-        # External script interpreters retain their original loader/libc pair.
         original_rpath=$(patchelf --print-rpath "$file" 2>/dev/null || true)
         # RUNPATH avoids hijacking transitive host graphics-driver dependencies.
         patchelf --set-rpath "$rpathPrefix${original_rpath:+:$original_rpath}" \

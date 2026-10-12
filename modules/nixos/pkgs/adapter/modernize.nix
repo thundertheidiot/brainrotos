@@ -3,6 +3,7 @@
   lib,
   runCommand,
   patchelf,
+  bash,
   stdenv,
   glibc,
   libxcrypt-legacy,
@@ -36,4 +37,7 @@ runCommand name
   }
   ''
     bash ${./modernize.sh}
+    # --update also replaces historical store paths. Only shell interpreters
+    # are available for replacement; old Python/Perl shebangs stay untouched.
+    HOST_PATH=${bash}/bin patchShebangs --host --update "$out"
   ''
