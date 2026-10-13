@@ -15,13 +15,18 @@
   ];
 
   perSystem = { pkgs, ... }: {
+    packages.br = pkgs.callPackage ../../pkgs/br.nix { };
     packages.greenboot = pkgs.callPackage ../../pkgs/greenboot.nix { };
     packages.boot-validation = pkgs.callPackage ../../pkgs/boot-validation.nix { };
     devShells.default = pkgs.mkShell {
-      packages = [
-        pkgs.python3
-        pkgs.shellcheck
-        pkgs.nixfmt
+      packages = with pkgs; [
+        cargo
+        clippy
+        python3
+        shellcheck
+        nixfmt
+        rustc
+        rustfmt
       ];
     };
   };
@@ -41,21 +46,37 @@
         unknown = name: throw "${name} is of file type unknown, aborting";
       };
     in
-    mapAttrs' (n: v: {
-      name = getName.${v} n;
-      value = inputs.nixpkgs.lib.nixosSystem {
-        modules = [
-          ({ pkgs, ... }: {
-            # i'm sorry isabel
-            _module.args.multiverse = inputs.multiverse.lib.mkMultiverse {
-              system = pkgs.stdenv.hostPlatform.system;
-              fastFallback = "eval";
-            };
-          })
-          "${inputs.self.outPath}/modules/nixos"
-          "${inputs.self.outPath}/config/${n}"
-          inputs.nix-flatpak.nixosModules.nix-flatpak
-        ];
-      };
-    }) (readDir "${inputs.self.outPath}/config");
+    mapAttrs' (
+      n: v:
+      let
+        name = getName.${v} n;
+      in
+      {
+        inherit name;
+        value = inputs.nixpkgs.lib.nixosSystem {
+          modules = [
+            ({ pkgs, ... }: {
+              # i'm sorry isabel
+              _module.args.multiverse = inputs.multiverse.lib.mkMultiverse {
+                system = pkgs.stdenv.hostPlatform.system;
+                fastFallback = "eval";
+              };
+            })
+            ({ pkgs, ... }: {
+              environment.systemPackages = [ inputs.self.packages.${pkgs.system}.br ];
+              environment.etc."br/multiverse.db".source = inputs.multiverse.packages.${pkgs.system}.index-db;
+              environment.etc."br/source.json".text = builtins.toJSON {
+                source = inputs.self.outPath;
+                update_ref = "github:thundertheidiot/brainrotos";
+                source_store_path = inputs.self.outPath;
+                configuration = name;
+              };
+            })
+            "${inputs.self.outPath}/modules/nixos"
+            "${inputs.self.outPath}/config/${n}"
+            inputs.nix-flatpak.nixosModules.nix-flatpak
+          ];
+        };
+      }
+    ) (readDir "${inputs.self.outPath}/config");
 }
