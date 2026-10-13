@@ -21,10 +21,6 @@ pub(crate) enum Commands {
     Install {
         #[arg(required = true, value_name = "PACKAGE")]
         packages: Vec<String>,
-        #[arg(long, conflicts_with = "no_switch")]
-        switch: bool,
-        #[arg(long)]
-        no_switch: bool,
     },
     Generations,
 }

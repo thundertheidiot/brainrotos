@@ -22,16 +22,12 @@ fn main() {
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Generations => system::generations(),
-        Commands::Install {
-            packages,
-            switch,
-            no_switch,
-        } => install(&packages, switch, no_switch),
+        Commands::Install { packages } => install(&packages),
         Commands::Update { switch, branch } => update(switch, branch),
     }
 }
 
-fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
+fn install(packages: &[String]) -> Result<()> {
     let parsed = packages
         .iter()
         .map(|package| parse(package))
@@ -42,72 +38,37 @@ fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
     package::update(&package_path, &parsed)?;
 
     let mut source = state::load()?;
-    let mut pending = state::refresh_pending(&mut source);
+    let running_source = state::running_source()?;
+    let staged_generation =
+        state::latest_staged_generation(std::path::Path::new("/run/current-system"))?;
 
-    if !no_switch {
-        let running_source = state::running_source()?;
-        let staged_generation =
-            state::latest_staged_generation(std::path::Path::new("/run/current-system"))?;
-
-        if let Some((_, staged_source)) = staged_generation
-            && !state::same_source(&staged_source, &running_source)
-        {
-            println!(
-                "Warning: an OS update is staged. This install will activate the older pinned generation with the new packages, then build and stage the updated OS generation."
-            );
-            return install_across_source_change(
-                &package_path,
-                package_snapshot,
-                state::selected_source(&running_source)?,
-                state::selected_source(&staged_source)?,
-            );
-        }
-
-        if !state::same_source(&source, &running_source) {
-            source = running_source;
-        }
-
-        source.pending_generation = None;
-        pending = false;
+    if let Some((_, staged_source)) = staged_generation
+        && !state::same_source(&staged_source, &running_source)
+    {
+        println!(
+            "Warning: an OS update is staged. This install will activate the older pinned generation with the new packages, then build and stage the updated OS generation."
+        );
+        return install_across_source_change(
+            &package_path,
+            package_snapshot,
+            state::selected_source(&running_source)?,
+            state::selected_source(&staged_source)?,
+        );
     }
 
-    let action = match (no_switch, switch, pending) {
-        (true, _, _) => Action::BuildOnly,
-        (false, true, _) | (false, false, false) => Action::Switch,
-        (false, false, true) => Action::Boot,
-    };
+    if !state::same_source(&source, &running_source) {
+        source = running_source;
+    }
+    source.pending_generation = None;
 
     source = state::selected_source(&source)?;
-    match system::pipeline(&source, action) {
-        Ok(generation) => match action {
-            Action::BuildOnly => {
-                println!(
-                    "Package list updated and system generation built; no activation was requested."
-                );
-                Ok(())
-            }
-            Action::Boot | Action::Switch => {
-                source.pending_generation = (action == Action::Boot).then_some(generation);
-                state::persist(&source)?;
-
-                let status = match action {
-                    Action::Boot => "staged for next boot",
-                    Action::Switch => "activated",
-                    Action::BuildOnly => unreachable!(),
-                };
-                println!("Package list updated and system {status}.");
-                Ok(())
-            }
-        },
+    match system::pipeline(&source, Action::Switch) {
+        Ok(_) => {
+            state::persist(&source)?;
+            println!("Package list updated and system activated.");
+            Ok(())
+        }
         Err(error) => {
-            if action == Action::BuildOnly {
-                return restore_packages_after_build_failure(
-                    &package_path,
-                    package_snapshot,
-                    &format!("{error:#}"),
-                );
-            }
-
             if let Some(build_error) = error.downcast_ref::<system::InitialBuildFailure>() {
                 return restore_packages_after_build_failure(
                     &package_path,
@@ -243,9 +204,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_rejects_conflicting_switch_flags() {
-        assert!(Cli::try_parse_from(["br", "install", "vim", "--switch", "--no-switch"]).is_err());
+    fn install_cli_requires_packages_and_rejects_switch_flags() {
+        assert!(Cli::try_parse_from(["br", "install", "vim", "--no-switch"]).is_err());
+        assert!(Cli::try_parse_from(["br", "install", "vim", "--switch"]).is_err());
         assert!(Cli::try_parse_from(["br", "install"]).is_err());
+        assert!(Cli::try_parse_from(["br", "install", "vim"]).is_ok());
+        assert!(Cli::try_parse_from(["br", "i", "vim"]).is_ok());
+        assert!(Cli::try_parse_from(["br", "update", "--switch"]).is_ok());
     }
 
     #[test]

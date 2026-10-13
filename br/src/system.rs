@@ -12,7 +12,6 @@ const DEFAULT_SOURCE: &str = "github:thundertheidiot/brainrotos";
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Action {
-    BuildOnly,
     Boot,
     Switch,
 }
@@ -119,10 +118,6 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
             &closure,
         ],
     )?;
-
-    if action == Action::BuildOnly {
-        return Ok(closure.into());
-    }
 
     let current = fs::canonicalize("/run/current-system")
         .unwrap_or_else(|_| PathBuf::from("/run/current-system"));

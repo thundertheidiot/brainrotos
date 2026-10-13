@@ -200,33 +200,6 @@ pub(crate) fn persist(state: &SourceState) -> Result<()> {
     atomic_json(&state_path(), state)
 }
 
-pub(crate) fn refresh_pending(state: &mut SourceState) -> bool {
-    let Some(pending) = &state.pending_generation else {
-        return false;
-    };
-
-    let pending = fs::canonicalize(pending).unwrap_or_else(|_| pending.clone());
-    let current_path = PathBuf::from("/run/current-system");
-    let current = fs::canonicalize(&current_path).unwrap_or(current_path);
-
-    if pending_generation_is_ahead(&pending, &current, Path::new("/nix/var/nix/profiles")) {
-        return true;
-    }
-
-    state.pending_generation = None;
-    false
-}
-
-fn pending_generation_is_ahead(pending: &Path, current: &Path, profiles_dir: &Path) -> bool {
-    let pending_number = profile_generation_number(pending, profiles_dir);
-    let current_number = profile_generation_number(current, profiles_dir);
-
-    match (pending_number, current_number) {
-        (Some(pending_number), Some(current_number)) => pending_number > current_number,
-        _ => pending != current,
-    }
-}
-
 fn profile_generation_number(system: &Path, profiles_dir: &Path) -> Option<u64> {
     let system = fs::canonicalize(system).ok()?;
 
@@ -370,29 +343,6 @@ mod tests {
 
         recorded.configuration = "workstation".into();
         assert!(!same_source(&recorded, &running));
-    }
-
-    #[test]
-    fn staged_generation_is_not_pending_after_a_later_generation_boots() {
-        use std::os::unix::fs::symlink;
-
-        let directory = tempfile::tempdir().unwrap();
-        let profiles = directory.path().join("profiles");
-        fs::create_dir(&profiles).unwrap();
-
-        let previous = directory.path().join("previous-system");
-        let current = directory.path().join("current-system");
-        let next = directory.path().join("next-system");
-        fs::create_dir(&previous).unwrap();
-        fs::create_dir(&current).unwrap();
-        fs::create_dir(&next).unwrap();
-
-        symlink(&previous, profiles.join("system-43-link")).unwrap();
-        symlink(&current, profiles.join("system-44-link")).unwrap();
-        symlink(&next, profiles.join("system-45-link")).unwrap();
-
-        assert!(!pending_generation_is_ahead(&previous, &current, &profiles));
-        assert!(pending_generation_is_ahead(&next, &current, &profiles));
     }
 
     #[test]
