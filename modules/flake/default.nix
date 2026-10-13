@@ -15,13 +15,18 @@
   ];
 
   perSystem = { pkgs, ... }: {
+    packages.br = pkgs.callPackage ../../pkgs/br.nix { };
     packages.greenboot = pkgs.callPackage ../../pkgs/greenboot.nix { };
     packages.boot-validation = pkgs.callPackage ../../pkgs/boot-validation.nix { };
     devShells.default = pkgs.mkShell {
-      packages = [
-        pkgs.python3
-        pkgs.shellcheck
-        pkgs.nixfmt
+      packages = with pkgs; [
+        cargo
+        clippy
+        python3
+        shellcheck
+        nixfmt
+        rustc
+        rustfmt
       ];
     };
   };
@@ -50,6 +55,15 @@
             _module.args.multiverse = inputs.multiverse.lib.mkMultiverse {
               system = pkgs.stdenv.hostPlatform.system;
               fastFallback = "eval";
+            };
+          })
+          ({ pkgs, ... }: {
+            environment.systemPackages = [ inputs.self.packages.${pkgs.system}.br ];
+            environment.etc."br/source.json".text = builtins.toJSON {
+              source = inputs.self.sourceInfo.url;
+              update_ref = inputs.self.sourceInfo.url;
+              source_store_path = inputs.self.outPath;
+              configuration = n;
             };
           })
           "${inputs.self.outPath}/modules/nixos"
