@@ -98,6 +98,51 @@ pub(crate) fn running_source() -> Result<SourceState> {
     source_from_generation_metadata(&contents)
 }
 
+pub(crate) fn latest_staged_generation(current: &Path) -> Result<Option<(PathBuf, SourceState)>> {
+    latest_staged_generation_in(current, Path::new("/nix/var/nix/profiles"))
+}
+
+fn latest_staged_generation_in(
+    current: &Path,
+    profiles_dir: &Path,
+) -> Result<Option<(PathBuf, SourceState)>> {
+    let Some(current_number) = profile_generation_number(current, profiles_dir) else {
+        return Ok(None);
+    };
+
+    let mut staged_profiles = fs::read_dir(profiles_dir)
+        .with_context(|| format!("reading Nix profiles in {}", profiles_dir.display()))?
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            let number = name.strip_prefix("system-")?.strip_suffix("-link")?;
+            let number = number.parse::<u64>().ok()?;
+            (number > current_number).then_some((number, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    staged_profiles.sort_unstable_by_key(|(number, _)| *number);
+
+    for (_, profile) in staged_profiles.into_iter().rev() {
+        let system = fs::canonicalize(&profile)
+            .with_context(|| format!("resolving staged profile {}", profile.display()))?;
+        if let Some(source) = source_at_generation(&system)? {
+            return Ok(Some((system, source)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn source_at_generation(generation: &Path) -> Result<Option<SourceState>> {
+    let path = generation.join("etc/br/source.json");
+    match fs::read(&path) {
+        Ok(contents) => source_from_generation_metadata(&contents).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
 fn source_from_generation_metadata(contents: &[u8]) -> Result<SourceState> {
     let metadata: GenerationSource =
         serde_json::from_slice(contents).context("invalid running-generation source metadata")?;
@@ -164,12 +209,38 @@ pub(crate) fn refresh_pending(state: &mut SourceState) -> bool {
     let current_path = PathBuf::from("/run/current-system");
     let current = fs::canonicalize(&current_path).unwrap_or(current_path);
 
-    if pending != current {
+    if pending_generation_is_ahead(&pending, &current, Path::new("/nix/var/nix/profiles")) {
         return true;
     }
 
     state.pending_generation = None;
     false
+}
+
+fn pending_generation_is_ahead(pending: &Path, current: &Path, profiles_dir: &Path) -> bool {
+    let pending_number = profile_generation_number(pending, profiles_dir);
+    let current_number = profile_generation_number(current, profiles_dir);
+
+    match (pending_number, current_number) {
+        (Some(pending_number), Some(current_number)) => pending_number > current_number,
+        _ => pending != current,
+    }
+}
+
+fn profile_generation_number(system: &Path, profiles_dir: &Path) -> Option<u64> {
+    let system = fs::canonicalize(system).ok()?;
+
+    fs::read_dir(profiles_dir)
+        .ok()?
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            let number = name.strip_prefix("system-")?.strip_suffix("-link")?;
+            let number = number.parse::<u64>().ok()?;
+            (fs::canonicalize(entry.path()).ok()?.as_path() == system).then_some(number)
+        })
+        .max()
 }
 
 pub(crate) fn selected_source(state: &SourceState) -> Result<SourceState> {
@@ -185,6 +256,23 @@ pub(crate) fn selected_source(state: &SourceState) -> Result<SourceState> {
     bail!(
         "selected source is not pinned to a local store path; run `br update` to establish a pinned source"
     )
+}
+
+pub(crate) fn same_source(left: &SourceState, right: &SourceState) -> bool {
+    let left_path = left
+        .source_store_path
+        .as_deref()
+        .or_else(|| left.source.strip_prefix("path:").map(Path::new));
+    let right_path = right
+        .source_store_path
+        .as_deref()
+        .or_else(|| right.source.strip_prefix("path:").map(Path::new));
+
+    left.configuration == right.configuration
+        && match (left_path, right_path) {
+            (Some(left_path), Some(right_path)) => left_path == right_path,
+            _ => left.source == right.source,
+        }
 }
 
 pub(crate) fn source_from_metadata(output: &[u8], reference: &str) -> Result<SourceState> {
@@ -259,5 +347,88 @@ mod tests {
             Some(PathBuf::from("/nix/store/old-source"))
         );
         assert_eq!(source.pending_generation, None);
+    }
+
+    #[test]
+    fn source_comparison_uses_pinned_path_and_configuration() {
+        let mut recorded = SourceState {
+            source: "github:owner/repo?rev=old".into(),
+            update_ref: None,
+            configuration: "base".into(),
+            source_store_path: Some("/nix/store/source".into()),
+            pending_generation: None,
+        };
+        let running = SourceState {
+            source: "github:owner/repo?rev=old".into(),
+            update_ref: None,
+            configuration: "base".into(),
+            source_store_path: Some("/nix/store/source".into()),
+            pending_generation: None,
+        };
+
+        assert!(same_source(&recorded, &running));
+
+        recorded.configuration = "workstation".into();
+        assert!(!same_source(&recorded, &running));
+    }
+
+    #[test]
+    fn staged_generation_is_not_pending_after_a_later_generation_boots() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let profiles = directory.path().join("profiles");
+        fs::create_dir(&profiles).unwrap();
+
+        let previous = directory.path().join("previous-system");
+        let current = directory.path().join("current-system");
+        let next = directory.path().join("next-system");
+        fs::create_dir(&previous).unwrap();
+        fs::create_dir(&current).unwrap();
+        fs::create_dir(&next).unwrap();
+
+        symlink(&previous, profiles.join("system-43-link")).unwrap();
+        symlink(&current, profiles.join("system-44-link")).unwrap();
+        symlink(&next, profiles.join("system-45-link")).unwrap();
+
+        assert!(!pending_generation_is_ahead(&previous, &current, &profiles));
+        assert!(pending_generation_is_ahead(&next, &current, &profiles));
+    }
+
+    #[test]
+    fn latest_staged_profile_supplies_its_own_source_metadata() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let profiles = directory.path().join("profiles");
+        fs::create_dir(&profiles).unwrap();
+
+        let current = directory.path().join("system-10");
+        let stale = directory.path().join("system-11");
+        let staged = directory.path().join("system-12");
+        for system in [&current, &stale, &staged] {
+            fs::create_dir_all(system.join("etc/br")).unwrap();
+        }
+        fs::write(
+            stale.join("etc/br/source.json"),
+            br#"{"source":"old","configuration":"base"}"#,
+        )
+        .unwrap();
+        fs::write(
+            staged.join("etc/br/source.json"),
+            br#"{"source":"updated","configuration":"base"}"#,
+        )
+        .unwrap();
+
+        symlink(&current, profiles.join("system-10-link")).unwrap();
+        symlink(&stale, profiles.join("system-11-link")).unwrap();
+        symlink(&staged, profiles.join("system-12-link")).unwrap();
+
+        let (staged_path, source) = latest_staged_generation_in(&current, &profiles)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(staged_path, staged);
+        assert_eq!(source.source, "updated");
     }
 }

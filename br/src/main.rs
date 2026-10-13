@@ -42,22 +42,33 @@ fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
     package::update(&package_path, &parsed)?;
 
     let mut source = state::load()?;
-    let pending = state::refresh_pending(&mut source);
+    let mut pending = state::refresh_pending(&mut source);
 
-    if !no_switch && pending {
-        eprintln!(
-            "Warning: an OS update is staged for the next boot. This install will activate the current OS generation with the new packages, then build and stage the updated OS generation."
-        );
-
+    if !no_switch {
         let running_source = state::running_source()?;
-        let updated_source = state::selected_source(&source)?;
+        let staged_generation =
+            state::latest_staged_generation(std::path::Path::new("/run/current-system"))?;
 
-        return install_while_update_is_pending(
-            &package_path,
-            package_snapshot,
-            running_source,
-            updated_source,
-        );
+        if let Some((_, staged_source)) = staged_generation
+            && !state::same_source(&staged_source, &running_source)
+        {
+            println!(
+                "Warning: an OS update is staged. This install will activate the older pinned generation with the new packages, then build and stage the updated OS generation."
+            );
+            return install_across_source_change(
+                &package_path,
+                package_snapshot,
+                state::selected_source(&running_source)?,
+                state::selected_source(&staged_source)?,
+            );
+        }
+
+        if !state::same_source(&source, &running_source) {
+            source = running_source;
+        }
+
+        source.pending_generation = None;
+        pending = false;
     }
 
     let action = match (no_switch, switch, pending) {
@@ -111,12 +122,21 @@ fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
     }
 }
 
-fn install_while_update_is_pending(
+fn install_across_source_change(
     package_path: &std::path::Path,
     package_snapshot: package::Snapshot,
     mut running_source: state::SourceState,
     mut updated_source: state::SourceState,
 ) -> Result<()> {
+    println!(
+        "Building and activating pinned source {}...",
+        running_source
+            .source_store_path
+            .as_deref()
+            .unwrap_or(std::path::Path::new(&running_source.source))
+            .display()
+    );
+
     match system::pipeline(&running_source, Action::Switch) {
         Ok(_) => {}
         Err(error)
@@ -132,6 +152,15 @@ fn install_while_update_is_pending(
         }
         Err(error) => return Err(error),
     }
+
+    println!(
+        "Building updated generation from {}...",
+        updated_source
+            .source_store_path
+            .as_deref()
+            .unwrap_or(std::path::Path::new(&updated_source.source))
+            .display()
+    );
 
     running_source
         .update_ref

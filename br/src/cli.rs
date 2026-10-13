@@ -10,7 +10,7 @@ pub(crate) struct Cli {
 /// Commands supported by the `br` executable.
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    #[command(visible_alias = "u")]
+    #[command(visible_alias = "up")]
     Update {
         #[arg(long, action = ArgAction::SetTrue)]
         switch: bool,
