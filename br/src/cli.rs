@@ -7,6 +7,7 @@ pub(crate) struct Cli {
     pub(crate) command: Commands,
 }
 
+/// Commands supported by the `br` executable.
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     Update {

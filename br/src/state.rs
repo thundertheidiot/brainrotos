@@ -38,6 +38,7 @@ impl MutationLock {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -45,6 +46,7 @@ impl MutationLock {
             .write(true)
             .open(&path)
             .with_context(|| format!("opening lock {}", path.display()))?;
+
         fs2::FileExt::lock_exclusive(&file).context("locking br operations")?;
         Ok(Self(file))
     }
@@ -57,9 +59,7 @@ impl Drop for MutationLock {
 }
 
 pub(crate) fn path_env(name: &str, default: &str) -> PathBuf {
-    std::env::var_os(name)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default.into())
+    std::env::var_os(name).map_or_else(|| default.into(), PathBuf::from)
 }
 
 pub(crate) fn package_path() -> PathBuf {
@@ -72,17 +72,21 @@ fn state_path() -> PathBuf {
 
 pub(crate) fn load_optional() -> Result<Option<SourceState>> {
     let path = state_path();
+
     if path.exists() {
-        let state: SourceState = serde_json::from_slice(&fs::read(&path)?)
+        let contents = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+        let state: SourceState = serde_json::from_slice(&contents)
             .with_context(|| format!("invalid source state {}", path.display()))?;
         if state.source.is_empty() || state.configuration.is_empty() {
             bail!("source state must include source and configuration");
         }
         return Ok(Some(state));
     }
-    let running = Path::new("/run/current-system/etc/br/source.json");
-    if running.exists() {
-        let metadata: GenerationSource = serde_json::from_slice(&fs::read(running)?)
+
+    let running_metadata = Path::new("/run/current-system/etc/br/source.json");
+    if running_metadata.exists() {
+        let contents = fs::read(running_metadata)?;
+        let metadata: GenerationSource = serde_json::from_slice(&contents)
             .context("invalid running-generation source metadata")?;
         return Ok(Some(SourceState {
             source: metadata.source,
@@ -92,6 +96,7 @@ pub(crate) fn load_optional() -> Result<Option<SourceState>> {
             pending_generation: None,
         }));
     }
+
     Ok(None)
 }
 
@@ -135,23 +140,25 @@ pub(crate) fn persist(state: &SourceState) -> Result<()> {
             ],
         )?;
     }
+
     atomic_json(&state_path(), state)
 }
 
 pub(crate) fn refresh_pending(state: &mut SourceState) -> bool {
-    if let Some(pending) = &state.pending_generation {
-        let pending = fs::canonicalize(pending).unwrap_or_else(|_| pending.clone());
-        let current = fs::canonicalize("/run/current-system")
-            .unwrap_or_else(|_| PathBuf::from("/run/current-system"));
-        if pending == current {
-            state.pending_generation = None;
-            false
-        } else {
-            true
-        }
-    } else {
-        false
+    let Some(pending) = &state.pending_generation else {
+        return false;
+    };
+
+    let pending = fs::canonicalize(pending).unwrap_or_else(|_| pending.clone());
+    let current_path = PathBuf::from("/run/current-system");
+    let current = fs::canonicalize(&current_path).unwrap_or(current_path);
+
+    if pending != current {
+        return true;
     }
+
+    state.pending_generation = None;
+    false
 }
 
 pub(crate) fn selected_source(state: &SourceState) -> Result<SourceState> {
@@ -171,22 +178,26 @@ pub(crate) fn selected_source(state: &SourceState) -> Result<SourceState> {
 
 pub(crate) fn source_from_metadata(output: &[u8], reference: &str) -> Result<SourceState> {
     let metadata: Value = serde_json::from_slice(output).context("parsing nix flake metadata")?;
+
     let path = metadata
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("nix flake metadata did not report a store path"))?;
-    let source = metadata
+
+    let locked_source = metadata
         .get("lockedUrl")
         .and_then(Value::as_str)
         .or_else(|| metadata.get("url").and_then(Value::as_str))
         .unwrap_or(reference);
-    let update_ref = metadata
+
+    let update_reference = metadata
         .get("originalUrl")
         .and_then(Value::as_str)
         .unwrap_or(reference);
+
     Ok(SourceState {
-        source: source.into(),
-        update_ref: Some(update_ref.into()),
+        source: locked_source.into(),
+        update_ref: Some(update_reference.into()),
         configuration: DEFAULT_CONFIGURATION.into(),
         source_store_path: Some(path.into()),
         pending_generation: None,
@@ -200,10 +211,13 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
+
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     let mut temp = NamedTempFile::new_in(parent)?;
+
     serde_json::to_writer_pretty(&mut temp, value)?;
     writeln!(temp)?;
+
     temp.persist(path)
         .map_err(|error| error.error)
         .with_context(|| format!("replacing {}", path.display()))?;

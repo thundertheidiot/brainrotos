@@ -1,5 +1,6 @@
 use crate::state::{self, SourceState};
 use anyhow::{Context, Result, anyhow, bail};
+use dialoguer::Confirm;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -42,6 +43,7 @@ pub(crate) fn resolve_source(reference: &str) -> Result<SourceState> {
             reference,
         ],
     )?;
+
     state::source_from_metadata(&output, reference)
 }
 
@@ -61,6 +63,7 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
     let src_path = src
         .to_str()
         .ok_or_else(|| anyhow!("non-UTF8 source store path"))?;
+
     run_status(
         "nix-store",
         &[
@@ -71,6 +74,7 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
             src_path,
         ],
     )?;
+
     let target = format!(
         "{}#nixosConfigurations.{}.config.system.build.toplevel",
         src.display(),
@@ -93,6 +97,7 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
         ],
     )
     .map_err(InitialBuildFailure)?;
+
     let output = String::from_utf8(output).map_err(|error| {
         InitialBuildFailure(anyhow!("nix build returned non-UTF8 output: {error}"))
     })?;
@@ -102,6 +107,7 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
         .ok_or_else(|| InitialBuildFailure(anyhow!("nix build returned no output path")))?
         .trim()
         .to_string();
+
     run_status(
         "nix-store",
         &[
@@ -116,9 +122,11 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
     let current = fs::canonicalize("/run/current-system")
         .unwrap_or_else(|_| PathBuf::from("/run/current-system"));
     run_status("nvd", &["diff", current.to_str().unwrap(), &closure])?;
+
     if action == Action::Switch {
         confirm_switch()?;
     }
+
     run_status(
         "nixos-rebuild",
         &[
@@ -132,6 +140,7 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
             },
         ],
     )?;
+
     Ok(closure.into())
 }
 
@@ -139,24 +148,25 @@ fn confirm_switch() -> Result<()> {
     if !io::stdin().is_terminal() {
         bail!("switch activation requires interactive confirmation");
     }
-    eprint!("Activate this system generation now? [y/N] ");
-    io::stderr().flush()?;
-    let mut response = String::new();
-    io::stdin().read_line(&mut response)?;
-    if confirms(&response) {
-        Ok(())
-    } else {
+
+    let confirmed = Confirm::new()
+        .with_prompt("Activate this system generation now?")
+        .default(false)
+        .wait_for_newline(true)
+        .interact()
+        .context("reading switch confirmation")?;
+
+    if !confirmed {
         bail!("switch activation cancelled")
     }
-}
 
-fn confirms(response: &str) -> bool {
-    response.trim().eq_ignore_ascii_case("y") || response.trim().eq_ignore_ascii_case("yes")
+    Ok(())
 }
 
 pub(crate) fn generations() -> Result<()> {
     let output = command_output("nixos-rebuild", &["list-generations", "--json"])
         .or_else(|_| command_output("nixos-rebuild", &["list-generations"]))?;
+
     io::stdout().write_all(&output)?;
     Ok(())
 }
@@ -167,23 +177,31 @@ fn spinner(message: &str) -> ProgressBar {
     }
     let bar = ProgressBar::new_spinner();
     bar.set_message(message.to_owned());
-    bar.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
+
+    let style = ProgressStyle::with_template("{spinner:.cyan} {msg}")
+        .expect("the static spinner template is valid");
+
+    bar.set_style(style);
     bar.enable_steady_tick(std::time::Duration::from_millis(100));
+
     bar
 }
 
 fn command_output(program: &str, args: &[&str]) -> Result<Vec<u8>> {
     let bar = spinner(&format!("Running {program}"));
+
     let result = Command::new(program)
         .args(args)
         .output()
         .with_context(|| format!("starting {program}"));
     bar.finish_and_clear();
+
     let output = result?;
     if !output.status.success() {
         io::stderr().write_all(&output.stderr)?;
         bail!("{program} failed with {}", status_text(output.status));
     }
+
     Ok(output.stdout)
 }
 
@@ -192,26 +210,17 @@ pub(crate) fn run_status(program: &str, args: &[&str]) -> Result<()> {
         .args(args)
         .status()
         .with_context(|| format!("starting {program}"))?;
+
     if !status.success() {
         bail!("{program} failed with {}", status_text(status));
     }
+
     Ok(())
 }
 
 fn status_text(status: ExitStatus) -> String {
-    status
-        .code()
-        .map(|code| format!("exit code {code}"))
-        .unwrap_or_else(|| "signal termination".into())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn confirmation_requires_an_explicit_yes() {
-        assert!(super::confirms("y"));
-        assert!(super::confirms("YES\n"));
-        assert!(!super::confirms(""));
-        assert!(!super::confirms("no"));
-    }
+    status.code().map_or_else(
+        || "signal termination".into(),
+        |code| format!("exit code {code}"),
+    )
 }

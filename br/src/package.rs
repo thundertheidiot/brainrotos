@@ -28,19 +28,19 @@ pub(crate) struct VersionedPackage {
 }
 
 pub(crate) fn parse(input: &str) -> Result<Package> {
-    if let Some((name, version)) = input.split_once('@') {
-        if name.is_empty() || version.is_empty() || version.contains('@') {
-            bail!("invalid package {input:?}; expected name@version with non-empty parts");
+    match input.split_once('@') {
+        Some((name, version))
+            if !name.is_empty() && !version.is_empty() && !version.contains('@') =>
+        {
+            Ok(Package::Versioned(VersionedPackage {
+                name: name.into(),
+                version: version.into(),
+                extra: Map::new(),
+            }))
         }
-        Ok(Package::Versioned(VersionedPackage {
-            name: name.into(),
-            version: version.into(),
-            extra: Map::new(),
-        }))
-    } else if input.is_empty() {
-        bail!("package name cannot be empty")
-    } else {
-        Ok(Package::Plain(input.into()))
+        Some(_) => bail!("invalid package {input:?}; expected name@version with non-empty parts"),
+        None if input.is_empty() => bail!("package name cannot be empty"),
+        None => Ok(Package::Plain(input.into())),
     }
 }
 
@@ -60,14 +60,17 @@ pub(crate) fn update(path: &Path, requested: &[Package]) -> Result<()> {
     } else {
         Vec::new()
     };
+
     for package in requested {
-        if !existing
+        let already_present = existing
             .iter()
-            .any(|old| identity(old) == identity(package))
-        {
+            .any(|existing_package| identity(existing_package) == identity(package));
+
+        if !already_present {
             existing.push(package.clone());
         }
     }
+
     atomic_json(path, &existing)
 }
 
@@ -91,6 +94,7 @@ pub(crate) fn restore(path: &Path, snapshot: Snapshot) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
+
     match snapshot.contents {
         Some(contents) => {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;

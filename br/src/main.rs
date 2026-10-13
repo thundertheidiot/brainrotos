@@ -1,9 +1,11 @@
+#![warn(clippy::pedantic)]
+
 mod cli;
 mod package;
 mod state;
 mod system;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use cli::{Cli, Commands};
 use package::parse;
@@ -24,23 +26,26 @@ fn run(cli: Cli) -> Result<()> {
             packages,
             switch,
             no_switch,
-        } => install(packages, switch, no_switch),
+        } => install(&packages, switch, no_switch),
         Commands::Update { switch, branch } => update(switch, branch),
     }
 }
 
-fn install(packages: Vec<String>, switch: bool, no_switch: bool) -> Result<()> {
+fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
     let parsed = packages
         .iter()
         .map(|package| parse(package))
         .collect::<Result<Vec<_>>>()?;
+
     let _lock = MutationLock::acquire()?;
     let package_path = state::package_path();
+
     if no_switch {
         package::update(&package_path, &parsed)?;
         println!("Package list updated; no build or activation was requested.");
         return Ok(());
     }
+
     let package_snapshot = package::snapshot(&package_path)?;
     package::update(&package_path, &parsed)?;
 
@@ -51,11 +56,12 @@ fn install(packages: Vec<String>, switch: bool, no_switch: bool) -> Result<()> {
             "Warning: an OS update is pending for the next boot. This install will also be staged; pass --switch to activate immediately."
         );
     }
-    let action = if switch || !pending {
-        Action::Switch
-    } else {
-        Action::Boot
+
+    let action = match (switch, pending) {
+        (true, _) | (false, false) => Action::Switch,
+        (false, true) => Action::Boot,
     };
+
     source = state::selected_source(&source)?;
     match system::pipeline(&source, action) {
         Ok(generation) => {
@@ -91,14 +97,15 @@ fn install(packages: Vec<String>, switch: bool, no_switch: bool) -> Result<()> {
 fn update(switch: bool, branch: Option<String>) -> Result<()> {
     let _lock = MutationLock::acquire()?;
     let previous = state::load_optional()?.unwrap_or_else(state::default);
-    let update_ref = if let Some(branch) = branch {
-        system::branch_reference(&branch)?
-    } else {
-        previous
+
+    let update_ref = match branch {
+        Some(branch) => system::branch_reference(&branch)?,
+        None => previous
             .update_ref
             .clone()
-            .unwrap_or_else(|| "github:thundertheidiot/brainrotos".into())
+            .unwrap_or_else(|| "github:thundertheidiot/brainrotos".into()),
     };
+
     let mut candidate = system::resolve_source(&update_ref)?;
     candidate.update_ref = Some(update_ref);
     candidate.configuration = if previous.configuration.is_empty() {
@@ -106,28 +113,25 @@ fn update(switch: bool, branch: Option<String>) -> Result<()> {
     } else {
         previous.configuration
     };
+
     let action = if switch { Action::Switch } else { Action::Boot };
-    match system::pipeline(&candidate, action) {
-        Ok(generation) => {
-            candidate.pending_generation = (action == Action::Boot).then_some(generation);
-            if let Err(error) = state::persist(&candidate) {
-                bail!(
-                    "system {} successfully, but source state could not be persisted: {error:#}",
-                    if switch { "activated" } else { "staged" }
-                );
-            }
-            println!(
-                "OS update {}.",
-                if switch {
-                    "activated"
-                } else {
-                    "staged for next boot"
-                }
-            );
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
+    let generation = system::pipeline(&candidate, action)?;
+    candidate.pending_generation = (action == Action::Boot).then_some(generation);
+
+    state::persist(&candidate).map_err(|error| {
+        anyhow!(
+            "system {} successfully, but source state could not be persisted: {error:#}",
+            if switch { "activated" } else { "staged" }
+        )
+    })?;
+
+    let result = if switch {
+        "activated"
+    } else {
+        "staged for next boot"
+    };
+    println!("OS update {result}.");
+    Ok(())
 }
 
 #[cfg(test)]
