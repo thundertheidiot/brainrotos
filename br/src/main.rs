@@ -22,6 +22,29 @@ fn main() {
 
 fn run(cli: Cli) -> Result<()> {
     use std::io::IsTerminal;
+    use std::os::unix::process::CommandExt;
+
+    if cli.command.requires_root() && !rustix::process::geteuid().is_root() {
+        // Packaged builds must re-enter the wrapper to restore their tool PATH after sudo.
+        let executable = option_env!("BR_EXECUTABLE").map_or_else(
+            || std::env::current_exe().context("locating br executable"),
+            |path| Ok(std::path::PathBuf::from(path)),
+        )?;
+        let mut command = std::process::Command::new("sudo");
+        let overrides = std::env::vars_os()
+            .filter_map(|(name, _)| name.into_string().ok())
+            .filter(|name| name.starts_with("BR_"))
+            .collect::<Vec<_>>();
+        if !overrides.is_empty() {
+            command.arg(format!("--preserve-env={}", overrides.join(",")));
+        }
+        let error = command
+            .arg("--")
+            .arg(executable)
+            .args(std::env::args_os().skip(1))
+            .exec();
+        return Err(error).context("re-executing br with sudo");
+    }
 
     if !matches!(cli.command, Commands::List | Commands::Generations { .. })
         || std::io::stdout().is_terminal()

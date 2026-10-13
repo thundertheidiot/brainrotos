@@ -21,6 +21,10 @@ fn invalid_uninstall_requests_leave_package_file_unchanged() {
             "packages not in the managed package list",
         ),
     ] {
+        // Valid mutating commands now authenticate before accessing managed state.
+        if exit_code == 1 && !rustix::process::geteuid().is_root() {
+            continue;
+        }
         let directory = tempfile::tempdir().unwrap();
         let packages = directory.path().join("packages.json");
         let original = b"[  \"git\" ]\n\n";

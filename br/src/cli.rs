@@ -53,3 +53,38 @@ pub(crate) enum Commands {
         json: bool,
     },
 }
+
+impl Commands {
+    pub(crate) fn requires_root(&self) -> bool {
+        matches!(
+            self,
+            Self::Install { .. } | Self::Uninstall { .. } | Self::Update { .. }
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_mutating_commands_require_root() {
+        for args in [
+            vec!["br", "install", "vim"],
+            vec!["br", "i", "vim"],
+            vec!["br", "uninstall", "vim"],
+            vec!["br", "rm", "vim"],
+            vec!["br", "update"],
+            vec!["br", "up", "--switch", "--branch", "testing"],
+        ] {
+            assert!(Cli::try_parse_from(args).unwrap().command.requires_root());
+        }
+        for args in [
+            vec!["br", "list"],
+            vec!["br", "generations"],
+            vec!["br", "generations", "--json"],
+        ] {
+            assert!(!Cli::try_parse_from(args).unwrap().command.requires_root());
+        }
+    }
+}

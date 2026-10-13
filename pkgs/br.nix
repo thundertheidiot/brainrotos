@@ -7,6 +7,9 @@
   rustPlatform,
   systemd,
 }:
+let
+  inherit (lib) makeBinPath;
+in
 rustPlatform.buildRustPackage {
   pname = "br";
   version = "0.1.0";
@@ -16,10 +19,14 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [ makeWrapper ];
 
+  preBuild = ''
+    export BR_EXECUTABLE="$out/bin/br"
+  '';
+
   postInstall = ''
     wrapProgram $out/bin/br \
-      --set PATH ${
-        lib.makeBinPath [
+      --set PATH /run/wrappers/bin:${
+        makeBinPath [
           nix
           nixos-rebuild-ng
           coreutils
