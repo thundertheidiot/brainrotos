@@ -160,16 +160,11 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    let mode = fs::metadata(path)
-        .ok()
-        .map(|metadata| metadata.permissions().mode());
     let mut temp = NamedTempFile::new_in(parent)?;
     serde_json::to_writer_pretty(&mut temp, value)?;
     writeln!(temp)?;
-    if let Some(mode) = mode {
-        temp.as_file()
-            .set_permissions(fs::Permissions::from_mode(mode))?;
-    }
+    temp.as_file()
+        .set_permissions(fs::Permissions::from_mode(0o644))?;
     temp.persist(path)
         .map_err(|error| error.error)
         .with_context(|| format!("replacing {}", path.display()))?;
@@ -240,6 +235,27 @@ mod tests {
     }
 
     #[test]
+    fn updates_make_new_and_existing_package_files_world_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("packages.json");
+        let requested = [parse("git").unwrap()];
+
+        update(&path, &requested).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        update(&path, &requested).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(load(&path).unwrap(), requested);
+    }
+
+    #[test]
     fn removal_matches_exact_identities_and_preserves_survivors() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("packages.json");
@@ -247,7 +263,7 @@ mod tests {
             &path,
             r#"["vim",{"name":"vim","version":"7.3","libc":false},{"name":"vim","version":"8.0","adapterOption":4},"git"]"#,
         ).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
 
         remove(&path, &[parse("vim").unwrap(), parse("vim").unwrap()]).unwrap();
         let value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -265,7 +281,7 @@ mod tests {
         );
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o640
+            0o644
         );
 
         remove(&path, &[parse("vim@8.0").unwrap(), parse("git").unwrap()]).unwrap();
