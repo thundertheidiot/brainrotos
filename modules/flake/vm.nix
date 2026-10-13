@@ -164,7 +164,7 @@
                   )
 
                   rsync -a --delete \
-                    --exclude .git --exclude vm --exclude result \
+                    --exclude .git --exclude vm --exclude result --exclude br/target \
                     -e "ssh ''${SSH_OPTS[*]}" \
                     "$PWD/" root@localhost:/root/brainrotos/
 

@@ -1,5 +1,5 @@
 use crate::state::{self, SourceState};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -93,11 +93,12 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
             &closure,
         ],
     )?;
+
     let current = fs::canonicalize("/run/current-system")
         .unwrap_or_else(|_| PathBuf::from("/run/current-system"));
     run_status("nvd", &["diff", current.to_str().unwrap(), &closure])?;
     run_status(
-        "nixos-rebuild-ng",
+        "nixos-rebuild",
         &[
             "--store-path",
             &closure,
@@ -112,8 +113,8 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
 }
 
 pub(crate) fn generations() -> Result<()> {
-    let output = command_output("nixos-rebuild-ng", &["list-generations", "--json"])
-        .or_else(|_| command_output("nixos-rebuild-ng", &["list-generations"]))?;
+    let output = command_output("nixos-rebuild", &["list-generations", "--json"])
+        .or_else(|_| command_output("nixos-rebuild", &["list-generations"]))?;
     io::stdout().write_all(&output)?;
     Ok(())
 }
