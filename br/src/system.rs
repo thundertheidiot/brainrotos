@@ -4,7 +4,7 @@ use dialoguer::Confirm;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::{error::Error, fmt};
 
@@ -126,7 +126,7 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
 
     let current = fs::canonicalize("/run/current-system")
         .unwrap_or_else(|_| PathBuf::from("/run/current-system"));
-    run_status("nvd", &["diff", current.to_str().unwrap(), &closure])?;
+    print_diff(&current, Path::new(&closure))?;
 
     if action == Action::Switch {
         confirm_switch()?;
@@ -147,6 +147,35 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
     )?;
 
     Ok(closure.into())
+}
+
+fn print_diff(old: &Path, new: &Path) -> Result<()> {
+    yansi::whenever(yansi::Condition::from(|| {
+        io::stdout().is_terminal()
+            && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+            && yansi::Condition::clicolor()
+    }));
+    // Avoid immutable SQLite reads while Nix may be updating the store database.
+    let report = dix::query_diff_report(old, new, true)
+        .map_err(|error| anyhow!("querying system diff: {error:#}"))?;
+    write_diff(&mut io::stdout().lock(), old, new, &report)
+}
+
+fn write_diff(
+    output: &mut impl Write,
+    old: &Path,
+    new: &Path,
+    report: &dix::DiffReport,
+) -> Result<()> {
+    use std::fmt::Write as _;
+
+    let mut rendered = String::new();
+    writeln!(rendered, "<<< {}", old.display())?;
+    writeln!(rendered, ">>> {}", new.display())?;
+    dix::write_diff_report(&mut rendered, report).context("rendering system diff")?;
+    output
+        .write_all(rendered.as_bytes())
+        .context("writing system diff")
 }
 
 fn confirm_switch() -> Result<()> {
@@ -228,4 +257,84 @@ fn status_text(status: ExitStatus) -> String {
         || "signal termination".into(),
         |code| format!("exit code {code}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_snapshot() -> dix::StoreSnapshot {
+        dix::StoreSnapshot {
+            closure: Vec::new(),
+            selected: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn diff_output_includes_paths_packages_and_closure_stats() {
+        yansi::disable();
+        let path = dix::StorePath::try_from(PathBuf::from(
+            "/nix/store/0123456789abcdefghijklmnopqrstuv-example-1.0",
+        ))
+        .unwrap();
+        let new = dix::StoreSnapshot {
+            closure: vec![dix::store::StorePathInfo::new(
+                path.clone(),
+                "100 B".parse().unwrap(),
+            )],
+            selected: vec![path],
+        };
+        let report = dix::diff_store_snapshots(&empty_snapshot(), &new);
+        let mut output = Vec::new();
+        write_diff(&mut output, Path::new("/old"), Path::new("/new"), &report).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.starts_with("<<< /old\n>>> /new\n"));
+        assert!(output.contains("ADDED\n[A+] example 1.0"));
+        assert!(output.contains("PATHS: 0 -> 1 (+1, -0)"));
+        assert!(output.contains("SIZE:"));
+        assert!(output.contains("DIFF:"));
+        assert!(!output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn diff_output_failure_retains_io_error() {
+        struct BrokenOutput;
+        impl Write for BrokenOutput {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed output"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let report = dix::diff_store_snapshots(&empty_snapshot(), &empty_snapshot());
+        let error = write_diff(
+            &mut BrokenOutput,
+            Path::new("/old"),
+            Path::new("/new"),
+            &report,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "writing system diff");
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a running NixOS system; run in the test VM"]
+    fn system_diff_smoke_test() {
+        let old = std::env::var_os("BR_DIFF_OLD")
+            .map_or_else(|| PathBuf::from("/run/current-system"), PathBuf::from);
+        let new = std::env::var_os("BR_DIFF_NEW")
+            .map_or_else(|| PathBuf::from("/run/current-system"), PathBuf::from);
+        print_diff(&old, &new).unwrap();
+
+        let missing = tempfile::tempdir().unwrap().path().join("missing-system");
+        let error = print_diff(&missing, &new).unwrap_err();
+        assert!(error.to_string().contains("querying system diff"));
+    }
 }

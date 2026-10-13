@@ -4,7 +4,6 @@
   makeWrapper,
   nix,
   nixos-rebuild-ng,
-  nvd,
   rustPlatform,
   systemd,
 }:
@@ -23,7 +22,6 @@ rustPlatform.buildRustPackage {
         lib.makeBinPath [
           nix
           nixos-rebuild-ng
-          nvd
           coreutils
           systemd
         ]
