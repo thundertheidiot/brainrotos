@@ -18,6 +18,21 @@
         "type": "github"
       }
     },
+    "multiverse": {
+      "locked": {
+        "lastModified": 1791717379,
+        "narHash": "sha256-XjLeQEmbSPfvQd7dW2MNL9ni4VNeszEp2UbXucGkMvU=",
+        "owner": "fzakaria",
+        "repo": "nixpkgs-multiverse",
+        "rev": "9c3fa4d86d65237a69640fca305d444d199b28cc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "fzakaria",
+        "repo": "nixpkgs-multiverse",
+        "type": "github"
+      }
+    },
     "nix-flatpak": {
       "locked": {
         "lastModified": 1790428548,
@@ -67,6 +82,7 @@
     "root": {
       "inputs": {
         "flake-parts": "flake-parts",
+        "multiverse": "multiverse",
         "nix-flatpak": "nix-flatpak",
         "nixpkgs": "nixpkgs"
       }

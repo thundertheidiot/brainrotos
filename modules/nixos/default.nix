@@ -1,4 +1,4 @@
-{...}: {
+{ ... }: {
   imports = [
     ./base.nix
     ./boot
@@ -8,6 +8,7 @@
     ./impermanence.nix
     ./label-disks.nix
     ./nix.nix
+    ./pkgs
     ./ramcache.nix
     ./security.nix
   ];
