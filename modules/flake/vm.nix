@@ -134,46 +134,49 @@
         name = "vm-push";
         runtimeInputs = with pkgs; [
           coreutils
+          nix
           openssh
           rsync
         ];
         text = ''
-                  set -euo pipefail
+          set -euo pipefail
 
-                  # copy the working tree into the test vm (ssh on port 2222, root,
-                  # password123) and rebuild it from /root/brainrotos, so test
-                  # generations never have to be pushed to a remote
-                  #
-                  #   nix run .#vm-push            # stage a new generation (boot)
-                  #   nix run .#vm-push switch     # activate immediately
-                  #
-                  ACTION="''${1:-boot}"
+          #   nix run .#vm-push            # stage a new generation (boot)
+          #   nix run .#vm-push switch     # activate immediately
+          ACTION="''${1:-boot}"
 
-                  case "$ACTION" in
-                    boot | switch | test | build) ;;
-                    *)
-                      echo "usage: vm-push [boot|switch|test|build]" >&2
-                      exit 1
-                      ;;
-                  esac
+          case "$ACTION" in
+            boot | switch | test | build) ;;
+            *)
+              echo "usage: vm-push [boot|switch|test|build]" >&2
+              exit 1
+              ;;
+          esac
 
-                  SSH_OPTS=(
-                    -p 2222
-                    -o StrictHostKeyChecking=no
-                    -o UserKnownHostsFile=/dev/null
-                  )
+          SSH_OPTS=(
+            -p 2222
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+          )
 
-                  rsync -a --delete \
-                    --exclude .git --exclude vm --exclude result --exclude br/target \
-                    -e "ssh ''${SSH_OPTS[*]}" \
-                    "$PWD/" root@localhost:/root/brainrotos/
+          # Build the minimal configuration on the host so expensive shared
+          # inputs (notably the multiverse index) are already in the VM store.
+          EMPTY_SYSTEM=$(nix build --no-link --print-out-paths .#nixosConfigurations.empty.config.system.build.toplevel)
+          NIX_SSHOPTS="''${SSH_OPTS[*]}" nix copy --to ssh://root@localhost "$EMPTY_SYSTEM"
 
-                  # remote command over stdin: expansions happen client side
-                  # (shellcheck misreads the intent; $ACTION must expand locally)
-                  # shellcheck disable=SC2087
-                  ssh "''${SSH_OPTS[@]}" root@localhost bash -s <<EOF
-                    cd /root/brainrotos &&
-                    nixos-rebuild $ACTION --impure --flake /root/brainrotos#base
+          # copy the working tree into the test vm and evaluate the real
+          # configuration there, reusing the locally-built store paths
+          rsync -a --delete \
+            --exclude .git --exclude vm --exclude result --exclude br/target \
+            -e "ssh ''${SSH_OPTS[*]}" \
+            "$PWD/" root@localhost:/root/brainrotos/
+
+          # remote command over stdin: expansions happen client side
+          # (shellcheck misreads the intent; $ACTION must expand locally)
+          # shellcheck disable=SC2087
+          ssh "''${SSH_OPTS[@]}" root@localhost bash -s <<EOF
+            cd /root/brainrotos &&
+            nixos-rebuild $ACTION --impure -I brainrotos=/nix/osconfig --flake /root/brainrotos#base
           EOF
         '';
       };

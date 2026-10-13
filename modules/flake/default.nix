@@ -55,6 +55,7 @@
         inherit name;
         value = inputs.nixpkgs.lib.nixosSystem {
           modules = [
+            { nixpkgs.hostPlatform.system = "x86_64-linux"; }
             ({ pkgs, ... }: {
               # i'm sorry isabel
               _module.args.multiverse = inputs.multiverse.lib.mkMultiverse {

@@ -3,6 +3,7 @@
   multiverse,
   lib,
   pkgs,
+  config,
   ...
 }:
 let
@@ -16,10 +17,12 @@ let
     filter
     isAttrs
     isString
+    mkOption
     ;
 
-  # <brainrotos/packages.json> will throw if the file doesn't exist
-  packageFile = toPath "${<brainrotos>}/packages.json";
+  inherit (lib.types) path;
+
+  packageFile = config.brainrotos.packages.v1.filePath;
   data = if pathExists packageFile then (fromJSON (readFile packageFile)) else [ ];
 
   mkRetroApp =
@@ -50,6 +53,15 @@ let
   packages = versionedPackages ++ plainPackages;
 in
 {
+  options = {
+    brainrotos.packages.v1.filePath = mkOption {
+      type = path;
+      # <brainrotos/packages.json> will throw if the file doesn't exist
+      default = toPath "${<brainrotos>}/packages.json";
+      description = "File path for package file.";
+    };
+  };
+
   config = {
     environment.systemPackages = packages;
   };
