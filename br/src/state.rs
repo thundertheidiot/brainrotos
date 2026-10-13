@@ -86,18 +86,29 @@ pub(crate) fn load_optional() -> Result<Option<SourceState>> {
     let running_metadata = Path::new("/run/current-system/etc/br/source.json");
     if running_metadata.exists() {
         let contents = fs::read(running_metadata)?;
-        let metadata: GenerationSource = serde_json::from_slice(&contents)
-            .context("invalid running-generation source metadata")?;
-        return Ok(Some(SourceState {
-            source: metadata.source,
-            update_ref: metadata.update_ref,
-            configuration: metadata.configuration,
-            source_store_path: metadata.source_store_path,
-            pending_generation: None,
-        }));
+        return source_from_generation_metadata(&contents).map(Some);
     }
 
     Ok(None)
+}
+
+pub(crate) fn running_source() -> Result<SourceState> {
+    let path = Path::new("/run/current-system/etc/br/source.json");
+    let contents = fs::read(path).context("reading running-generation source metadata")?;
+    source_from_generation_metadata(&contents)
+}
+
+fn source_from_generation_metadata(contents: &[u8]) -> Result<SourceState> {
+    let metadata: GenerationSource =
+        serde_json::from_slice(contents).context("invalid running-generation source metadata")?;
+
+    Ok(SourceState {
+        source: metadata.source,
+        update_ref: metadata.update_ref,
+        configuration: metadata.configuration,
+        source_store_path: metadata.source_store_path,
+        pending_generation: None,
+    })
 }
 
 pub(crate) fn load() -> Result<SourceState> {
@@ -223,4 +234,30 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
         .with_context(|| format!("replacing {}", path.display()))?;
     fs::File::open(parent)?.sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn running_generation_metadata_restores_its_pinned_source() {
+        let metadata = br#"{
+            "source":"github:owner/repo?rev=old",
+            "update_ref":"github:owner/repo/edge",
+            "configuration":"base",
+            "source_store_path":"/nix/store/old-source"
+        }"#;
+
+        let source = source_from_generation_metadata(metadata).unwrap();
+
+        assert_eq!(source.source, "github:owner/repo?rev=old");
+        assert_eq!(source.update_ref.as_deref(), Some("github:owner/repo/edge"));
+        assert_eq!(source.configuration, "base");
+        assert_eq!(
+            source.source_store_path,
+            Some(PathBuf::from("/nix/store/old-source"))
+        );
+        assert_eq!(source.pending_generation, None);
+    }
 }

@@ -5,7 +5,7 @@ mod package;
 mod state;
 mod system;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use cli::{Cli, Commands};
 use package::parse;
@@ -43,9 +43,20 @@ fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
 
     let mut source = state::load()?;
     let pending = state::refresh_pending(&mut source);
-    if !no_switch && pending && !switch {
+
+    if !no_switch && pending {
         eprintln!(
-            "Warning: an OS update is pending for the next boot. This install will also be staged; pass --switch to activate immediately."
+            "Warning: an OS update is staged for the next boot. This install will activate the current OS generation with the new packages, then build and stage the updated OS generation."
+        );
+
+        let running_source = state::running_source()?;
+        let updated_source = state::selected_source(&source)?;
+
+        return install_while_update_is_pending(
+            &package_path,
+            package_snapshot,
+            running_source,
+            updated_source,
         );
     }
 
@@ -98,6 +109,55 @@ fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
             ))
         }
     }
+}
+
+fn install_while_update_is_pending(
+    package_path: &std::path::Path,
+    package_snapshot: package::Snapshot,
+    mut running_source: state::SourceState,
+    mut updated_source: state::SourceState,
+) -> Result<()> {
+    match system::pipeline(&running_source, Action::Switch) {
+        Ok(_) => {}
+        Err(error)
+            if error
+                .downcast_ref::<system::InitialBuildFailure>()
+                .is_some() =>
+        {
+            return restore_packages_after_build_failure(
+                package_path,
+                package_snapshot,
+                &format!("{error:#}"),
+            );
+        }
+        Err(error) => return Err(error),
+    }
+
+    running_source
+        .update_ref
+        .clone_from(&updated_source.update_ref);
+    running_source
+        .pending_generation
+        .clone_from(&updated_source.pending_generation);
+    state::persist(&running_source).context(
+        "the current OS generation was activated, but its source state could not be persisted",
+    )?;
+    let updated_generation = system::pipeline(&updated_source, Action::Boot).map_err(|error| {
+        anyhow!(
+            "the current OS generation was activated with the new packages, but the updated OS generation could not be staged: {error:#}"
+        )
+    })?;
+    updated_source.pending_generation = Some(updated_generation);
+    state::persist(&updated_source).map_err(|error| {
+        anyhow!(
+            "the updated OS generation was staged, but its source state could not be persisted: {error:#}"
+        )
+    })?;
+
+    println!(
+        "Package list updated; current generation activated and OS update staged for next boot."
+    );
+    Ok(())
 }
 
 fn restore_packages_after_build_failure(
