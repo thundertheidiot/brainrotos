@@ -51,15 +51,22 @@ fn identity(package: &Package) -> (&str, Option<&str>) {
     }
 }
 
-pub(crate) fn update(path: &Path, requested: &[Package]) -> Result<()> {
-    let mut existing: Vec<Package> = if path.exists() {
-        serde_json::from_slice(
-            &fs::read(path).with_context(|| format!("reading {}", path.display()))?,
-        )
-        .with_context(|| format!("parsing {}", path.display()))?
-    } else {
-        Vec::new()
+pub(crate) fn load(path: &Path) -> Result<Vec<Package>> {
+    let contents = match fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
     };
+    serde_json::from_slice(&contents).with_context(|| format!("parsing {}", path.display()))
+}
+
+pub(crate) fn display(package: &Package) -> String {
+    let (name, version) = identity(package);
+    version.map_or_else(|| name.to_owned(), |version| format!("{name}@{version}"))
+}
+
+pub(crate) fn update(path: &Path, requested: &[Package]) -> Result<()> {
+    let mut existing = load(path)?;
 
     for package in requested {
         let already_present = existing
@@ -75,14 +82,7 @@ pub(crate) fn update(path: &Path, requested: &[Package]) -> Result<()> {
 }
 
 pub(crate) fn remove(path: &Path, requested: &[Package]) -> Result<()> {
-    let mut existing: Vec<Package> = if path.exists() {
-        serde_json::from_slice(
-            &fs::read(path).with_context(|| format!("reading {}", path.display()))?,
-        )
-        .with_context(|| format!("parsing {}", path.display()))?
-    } else {
-        Vec::new()
-    };
+    let mut existing = load(path)?;
 
     let missing = requested
         .iter()
@@ -91,10 +91,7 @@ pub(crate) fn remove(path: &Path, requested: &[Package]) -> Result<()> {
                 .iter()
                 .any(|entry| identity(entry) == identity(package))
         })
-        .map(|package| {
-            let (name, version) = identity(package);
-            version.map_or_else(|| name.to_owned(), |version| format!("{name}@{version}"))
-        })
+        .map(display)
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         bail!(
@@ -183,6 +180,31 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loading_and_display_preserve_order_and_package_identities() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("packages.json");
+        assert!(load(&path).unwrap().is_empty());
+        assert!(!path.exists());
+
+        fs::write(
+            &path,
+            r#"["git",{"name":"vim","version":"7.3","libc":false},"vim"]"#,
+        )
+        .unwrap();
+        let packages = load(&path).unwrap();
+        assert_eq!(
+            packages.iter().map(display).collect::<Vec<_>>(),
+            ["git", "vim@7.3", "vim"]
+        );
+        assert_eq!(serde_json::to_value(&packages).unwrap()[1]["libc"], false);
+
+        fs::write(&path, "[]").unwrap();
+        assert!(load(&path).unwrap().is_empty());
+        fs::write(&path, "not json").unwrap();
+        assert!(load(&path).unwrap_err().to_string().contains("parsing"));
+    }
 
     #[test]
     fn parses_plain_and_versioned_packages() {

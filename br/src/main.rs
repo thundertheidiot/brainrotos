@@ -21,11 +21,23 @@ fn main() {
 
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Commands::List => list_packages(),
         Commands::Generations => system::generations(),
         Commands::Install { packages } => edit_packages(&packages, package::update),
         Commands::Uninstall { packages } => edit_packages(&packages, package::remove),
         Commands::Update { switch, branch } => update(switch, branch),
     }
+}
+
+fn list_packages() -> Result<()> {
+    use std::io::{self, Write};
+
+    let packages = package::load(&state::package_path())?;
+    let mut output = io::stdout().lock();
+    for package in &packages {
+        writeln!(output, "{}", package::display(package)).context("writing package list")?;
+    }
+    Ok(())
 }
 
 fn edit_packages(

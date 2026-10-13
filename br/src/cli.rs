@@ -28,5 +28,7 @@ pub(crate) enum Commands {
         #[arg(required = true, value_name = "PACKAGE")]
         packages: Vec<String>,
     },
+    /// List packages in the managed package list.
+    List,
     Generations,
 }
