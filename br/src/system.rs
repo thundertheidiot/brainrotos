@@ -1,5 +1,5 @@
 use crate::state::{self, SourceState};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -97,9 +97,13 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
     let current = fs::canonicalize("/run/current-system")
         .unwrap_or_else(|_| PathBuf::from("/run/current-system"));
     run_status("nvd", &["diff", current.to_str().unwrap(), &closure])?;
+    if action == Action::Switch {
+        confirm_switch()?;
+    }
     run_status(
         "nixos-rebuild",
         &[
+            "--no-reexec",
             "--store-path",
             &closure,
             if action == Action::Boot {
@@ -110,6 +114,21 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
         ],
     )?;
     Ok(closure.into())
+}
+
+fn confirm_switch() -> Result<()> {
+    if !io::stdin().is_terminal() {
+        bail!("switch activation requires interactive confirmation");
+    }
+    eprint!("Activate this system generation now? [y/N] ");
+    io::stderr().flush()?;
+    let mut response = String::new();
+    io::stdin().read_line(&mut response)?;
+    if response.trim().eq_ignore_ascii_case("y") || response.trim().eq_ignore_ascii_case("yes") {
+        Ok(())
+    } else {
+        bail!("switch activation cancelled")
+    }
 }
 
 pub(crate) fn generations() -> Result<()> {
@@ -161,4 +180,17 @@ fn status_text(status: ExitStatus) -> String {
         .code()
         .map(|code| format!("exit code {code}"))
         .unwrap_or_else(|| "signal termination".into())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn confirmation_requires_an_explicit_yes() {
+        for response in ["", "n", "no", "Y", "yes"] {
+            assert_eq!(
+                matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+                matches!(response, "Y" | "yes")
+            );
+        }
+    }
 }

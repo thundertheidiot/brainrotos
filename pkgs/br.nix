@@ -1,10 +1,12 @@
 {
   lib,
+  coreutils,
   makeWrapper,
   nix,
   nixos-rebuild-ng,
   nvd,
   rustPlatform,
+  systemd,
 }:
 rustPlatform.buildRustPackage {
   pname = "br";
@@ -22,6 +24,8 @@ rustPlatform.buildRustPackage {
           nix
           nixos-rebuild-ng
           nvd
+          coreutils
+          systemd
         ]
       }
   '';
