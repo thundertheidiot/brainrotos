@@ -2,13 +2,15 @@
   lib,
   config,
   ...
-}: let
+}:
+let
   inherit (lib) mkIf mkDefault;
   inherit (lib.options) mkOption;
   inherit (lib.types) bool;
 
   cfg = config.brainrotos;
-in {
+in
+{
   options = {
     brainrotos.labeledDisks.v1 = mkOption {
       type = bool;
@@ -21,7 +23,7 @@ in {
       "/" = {
         fsType = "tmpfs";
         options = [
-          "size=10M"
+          "size=100M"
           "defaults"
           "mode=755"
         ];
@@ -29,29 +31,29 @@ in {
       "/boot" = {
         label = mkDefault "BROS_BOOT";
         fsType = "vfat";
-        options = ["umask=0077"];
+        options = [ "umask=0077" ];
       };
       "/nix" = {
         label = mkDefault "bros-main";
         fsType = "btrfs";
-        options = ["subvol=@nix"];
+        options = [ "subvol=@nix" ];
         neededForBoot = true;
       };
       "/home" = {
         label = mkDefault "bros-main";
         fsType = "btrfs";
-        options = ["subvol=@home"];
+        options = [ "subvol=@home" ];
       };
       "/tmp" = {
         label = mkDefault "bros-main";
         fsType = "btrfs";
-        options = ["subvol=@tmp"];
+        options = [ "subvol=@tmp" ];
         neededForBoot = true;
       };
       "/var/tmp" = {
         label = mkDefault "bros-main";
         fsType = "btrfs";
-        options = ["subvol=@var_tmp"];
+        options = [ "subvol=@var_tmp" ];
       };
     };
   };
