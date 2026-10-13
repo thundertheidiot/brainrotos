@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
+use std::{error::Error, fmt};
 
 const DEFAULT_SOURCE: &str = "github:thundertheidiot/brainrotos";
 
@@ -12,6 +13,21 @@ const DEFAULT_SOURCE: &str = "github:thundertheidiot/brainrotos";
 pub(crate) enum Action {
     Boot,
     Switch,
+}
+
+#[derive(Debug)]
+pub(crate) struct InitialBuildFailure(anyhow::Error);
+
+impl fmt::Display for InitialBuildFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "initial Nix build failed: {:#}", self.0)
+    }
+}
+
+impl Error for InitialBuildFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.0.as_ref())
+    }
 }
 
 pub(crate) fn resolve_source(reference: &str) -> Result<SourceState> {
@@ -75,12 +91,15 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
             "--print-out-paths",
             &target,
         ],
-    )?;
-    let output = String::from_utf8(output).context("nix build returned non-UTF8 output")?;
+    )
+    .map_err(InitialBuildFailure)?;
+    let output = String::from_utf8(output).map_err(|error| {
+        InitialBuildFailure(anyhow!("nix build returned non-UTF8 output: {error}"))
+    })?;
     let closure = output
         .lines()
         .last()
-        .ok_or_else(|| anyhow!("nix build returned no output path"))?
+        .ok_or_else(|| InitialBuildFailure(anyhow!("nix build returned no output path")))?
         .trim()
         .to_string();
     run_status(
@@ -124,11 +143,15 @@ fn confirm_switch() -> Result<()> {
     io::stderr().flush()?;
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
-    if response.trim().eq_ignore_ascii_case("y") || response.trim().eq_ignore_ascii_case("yes") {
+    if confirms(&response) {
         Ok(())
     } else {
         bail!("switch activation cancelled")
     }
+}
+
+fn confirms(response: &str) -> bool {
+    response.trim().eq_ignore_ascii_case("y") || response.trim().eq_ignore_ascii_case("yes")
 }
 
 pub(crate) fn generations() -> Result<()> {
@@ -186,11 +209,9 @@ fn status_text(status: ExitStatus) -> String {
 mod tests {
     #[test]
     fn confirmation_requires_an_explicit_yes() {
-        for response in ["", "n", "no", "Y", "yes"] {
-            assert_eq!(
-                matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
-                matches!(response, "Y" | "yes")
-            );
-        }
+        assert!(super::confirms("y"));
+        assert!(super::confirms("YES\n"));
+        assert!(!super::confirms(""));
+        assert!(!super::confirms("no"));
     }
 }

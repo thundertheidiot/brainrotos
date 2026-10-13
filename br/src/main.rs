@@ -35,11 +35,14 @@ fn install(packages: Vec<String>, switch: bool, no_switch: bool) -> Result<()> {
         .map(|package| parse(package))
         .collect::<Result<Vec<_>>>()?;
     let _lock = MutationLock::acquire()?;
-    package::update(&state::package_path(), &parsed)?;
+    let package_path = state::package_path();
     if no_switch {
+        package::update(&package_path, &parsed)?;
         println!("Package list updated; no build or activation was requested.");
         return Ok(());
     }
+    let package_snapshot = package::snapshot(&package_path)?;
+    package::update(&package_path, &parsed)?;
 
     let mut source = state::load()?;
     let pending = state::refresh_pending(&mut source);
@@ -68,9 +71,20 @@ fn install(packages: Vec<String>, switch: bool, no_switch: bool) -> Result<()> {
             );
             Ok(())
         }
-        Err(error) => Err(anyhow!(
-            "package list was updated, but build or activation failed: {error:#}"
-        )),
+        Err(error) => {
+            if let Some(build_error) = error.downcast_ref::<system::InitialBuildFailure>() {
+                let build_message = format!("{build_error:#}");
+                return match package::restore(&package_path, package_snapshot) {
+                    Ok(()) => Err(anyhow!("{build_message}; package list was restored")),
+                    Err(restore_error) => Err(anyhow!(
+                        "{build_message}, and restoring the package list also failed: {restore_error:#}"
+                    )),
+                };
+            }
+            Err(anyhow!(
+                "package list was updated, but a later build or activation phase failed: {error:#}"
+            ))
+        }
     }
 }
 
