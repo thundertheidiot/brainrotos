@@ -64,6 +64,7 @@
             })
             ({ pkgs, ... }: {
               environment.systemPackages = [ inputs.self.packages.${pkgs.system}.br ];
+              environment.etc."br/multiverse.db".source = inputs.multiverse.packages.${pkgs.system}.index-db;
               environment.etc."br/source.json".text = builtins.toJSON {
                 source = inputs.self.outPath;
                 update_ref = "github:thundertheidiot/brainrotos";
