@@ -22,5 +22,11 @@ pub(crate) enum Commands {
         #[arg(required = true, value_name = "PACKAGE")]
         packages: Vec<String>,
     },
+    /// Remove packages from the managed package list and activate the system.
+    #[command(visible_alias = "rm")]
+    Uninstall {
+        #[arg(required = true, value_name = "PACKAGE")]
+        packages: Vec<String>,
+    },
     Generations,
 }

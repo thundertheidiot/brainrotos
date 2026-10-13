@@ -74,6 +74,43 @@ pub(crate) fn update(path: &Path, requested: &[Package]) -> Result<()> {
     atomic_json(path, &existing)
 }
 
+pub(crate) fn remove(path: &Path, requested: &[Package]) -> Result<()> {
+    let mut existing: Vec<Package> = if path.exists() {
+        serde_json::from_slice(
+            &fs::read(path).with_context(|| format!("reading {}", path.display()))?,
+        )
+        .with_context(|| format!("parsing {}", path.display()))?
+    } else {
+        Vec::new()
+    };
+
+    let missing = requested
+        .iter()
+        .filter(|package| {
+            !existing
+                .iter()
+                .any(|entry| identity(entry) == identity(package))
+        })
+        .map(|package| {
+            let (name, version) = identity(package);
+            version.map_or_else(|| name.to_owned(), |version| format!("{name}@{version}"))
+        })
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        bail!(
+            "packages not in the managed package list: {}",
+            missing.join(", ")
+        );
+    }
+
+    existing.retain(|entry| {
+        !requested
+            .iter()
+            .any(|package| identity(entry) == identity(package))
+    });
+    atomic_json(path, &existing)
+}
+
 pub(crate) fn snapshot(path: &Path) -> Result<Snapshot> {
     match fs::metadata(path) {
         Ok(metadata) => Ok(Snapshot {
@@ -181,11 +218,61 @@ mod tests {
     }
 
     #[test]
+    fn removal_matches_exact_identities_and_preserves_survivors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("packages.json");
+        fs::write(
+            &path,
+            r#"["vim",{"name":"vim","version":"7.3","libc":false},{"name":"vim","version":"8.0","adapterOption":4},"git"]"#,
+        ).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        remove(&path, &[parse("vim").unwrap(), parse("vim").unwrap()]).unwrap();
+        let value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value.as_array().unwrap().len(), 3);
+        assert_eq!(value[0]["version"], "7.3");
+        assert_eq!(value[0]["libc"], false);
+
+        remove(&path, &[parse("vim@7.3").unwrap()]).unwrap();
+        let value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!([
+                {"name":"vim","version":"8.0","adapterOption":4}, "git"
+            ])
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+
+        remove(&path, &[parse("vim@8.0").unwrap(), parse("git").unwrap()]).unwrap();
+        let value: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(value, serde_json::json!([]));
+    }
+
+    #[test]
+    fn removal_validates_all_requests_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("packages.json");
+        let original = b"[  \"git\" ]\n\n";
+        fs::write(&path, original).unwrap();
+        let error = remove(&path, &[parse("git").unwrap(), parse("vim@7.3").unwrap()]).unwrap_err();
+        assert!(error.to_string().contains("vim@7.3"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+
+        fs::remove_file(&path).unwrap();
+        assert!(remove(&path, &[parse("git").unwrap()]).is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn malformed_file_is_never_overwritten() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("packages.json");
         fs::write(&path, "not json").unwrap();
         assert!(update(&path, &[parse("vim").unwrap()]).is_err());
+        assert!(remove(&path, &[parse("vim").unwrap()]).is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), "not json");
     }
 

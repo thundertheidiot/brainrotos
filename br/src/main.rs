@@ -22,12 +22,16 @@ fn main() {
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Generations => system::generations(),
-        Commands::Install { packages } => install(&packages),
+        Commands::Install { packages } => edit_packages(&packages, package::update),
+        Commands::Uninstall { packages } => edit_packages(&packages, package::remove),
         Commands::Update { switch, branch } => update(switch, branch),
     }
 }
 
-fn install(packages: &[String]) -> Result<()> {
+fn edit_packages(
+    packages: &[String],
+    edit: fn(&std::path::Path, &[package::Package]) -> Result<()>,
+) -> Result<()> {
     let parsed = packages
         .iter()
         .map(|package| parse(package))
@@ -35,7 +39,7 @@ fn install(packages: &[String]) -> Result<()> {
     let _lock = MutationLock::acquire()?;
     let package_path = state::package_path();
     let package_snapshot = package::snapshot(&package_path)?;
-    package::update(&package_path, &parsed)?;
+    edit(&package_path, &parsed)?;
 
     let mut source = state::load()?;
     let running_source = state::running_source()?;
@@ -46,9 +50,9 @@ fn install(packages: &[String]) -> Result<()> {
         && !state::same_source(&staged_source, &running_source)
     {
         println!(
-            "Warning: an OS update is staged. This install will activate the older pinned generation with the new packages, then build and stage the updated OS generation."
+            "Warning: an OS update is staged. This package change will activate the older pinned generation with the updated package list, then build and stage the updated OS generation."
         );
-        return install_across_source_change(
+        return edit_packages_across_source_change(
             &package_path,
             package_snapshot,
             state::selected_source(&running_source)?,
@@ -83,7 +87,7 @@ fn install(packages: &[String]) -> Result<()> {
     }
 }
 
-fn install_across_source_change(
+fn edit_packages_across_source_change(
     package_path: &std::path::Path,
     package_snapshot: package::Snapshot,
     mut running_source: state::SourceState,
@@ -134,7 +138,7 @@ fn install_across_source_change(
     )?;
     let updated_generation = system::pipeline(&updated_source, Action::Boot).map_err(|error| {
         anyhow!(
-            "the current OS generation was activated with the new packages, but the updated OS generation could not be staged: {error:#}"
+            "the current OS generation was activated with the updated package list, but the updated OS generation could not be staged: {error:#}"
         )
     })?;
     updated_source.pending_generation = Some(updated_generation);
@@ -211,6 +215,18 @@ mod tests {
         assert!(Cli::try_parse_from(["br", "install", "vim"]).is_ok());
         assert!(Cli::try_parse_from(["br", "i", "vim"]).is_ok());
         assert!(Cli::try_parse_from(["br", "update", "--switch"]).is_ok());
+    }
+
+    #[test]
+    fn uninstall_cli_requires_packages_and_rejects_switch_flags() {
+        assert!(Cli::try_parse_from(["br", "uninstall"]).is_err());
+        assert!(Cli::try_parse_from(["br", "uninstall", "vim", "--no-switch"]).is_err());
+        assert!(Cli::try_parse_from(["br", "uninstall", "vim", "--switch"]).is_err());
+        assert!(Cli::try_parse_from(["br", "uninstall", "vim", "git@2.0"]).is_ok());
+        assert!(matches!(
+            Cli::try_parse_from(["br", "rm", "vim"]).unwrap().command,
+            Commands::Uninstall { .. }
+        ));
     }
 
     #[test]
