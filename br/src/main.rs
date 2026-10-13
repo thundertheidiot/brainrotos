@@ -4,6 +4,7 @@ mod cli;
 mod package;
 mod state;
 mod system;
+mod ui;
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -14,15 +15,28 @@ use system::Action;
 
 fn main() {
     if let Err(error) = run(Cli::parse()) {
-        eprintln!("br: {error:#}");
+        ui::status("ERROR", &format!("br: {error:#}"), ui::Tone::Error);
         std::process::exit(1);
     }
 }
 
 fn run(cli: Cli) -> Result<()> {
+    use std::io::IsTerminal;
+
+    if !matches!(cli.command, Commands::List | Commands::Generations { .. })
+        || std::io::stdout().is_terminal()
+    {
+        ui::heading(match &cli.command {
+            Commands::List => "list",
+            Commands::Generations { .. } => "generations",
+            Commands::Install { .. } => "install",
+            Commands::Uninstall { .. } => "uninstall",
+            Commands::Update { .. } => "update",
+        });
+    }
     match cli.command {
         Commands::List => list_packages(),
-        Commands::Generations => system::generations(),
+        Commands::Generations { json } => system::generations(json),
         Commands::Install { packages } => edit_packages(&packages, package::update),
         Commands::Uninstall { packages } => edit_packages(&packages, package::remove),
         Commands::Update { switch, branch } => update(switch, branch),
@@ -30,12 +44,50 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 fn list_packages() -> Result<()> {
-    use std::io::{self, Write};
+    use std::io::{self, IsTerminal, Write};
 
     let packages = package::load(&state::package_path())?;
     let mut output = io::stdout().lock();
+    let terminal = output.is_terminal();
+    let color = ui::color_enabled(terminal);
+    if terminal {
+        writeln!(
+            output,
+            "\n{}",
+            ui::separator(
+                "PACKAGES",
+                usize::from(dialoguer::console::Term::stdout().size().1).min(80),
+                color
+            )
+        )
+        .context("writing package list")?;
+    }
     for package in &packages {
-        writeln!(output, "{}", package::display(package)).context("writing package list")?;
+        let identity = package::display(package);
+        let rendered = if terminal {
+            match identity.split_once('@') {
+                Some((name, version)) => format!(
+                    "   {}@{}",
+                    ui::paint(name, ui::Tone::Accent, color),
+                    ui::paint(version, ui::Tone::Value, color)
+                ),
+                None => format!("   {}", ui::paint(&identity, ui::Tone::Accent, color)),
+            }
+        } else {
+            identity
+        };
+        writeln!(output, "{rendered}").context("writing package list")?;
+    }
+    if terminal {
+        writeln!(output, "\n   {} managed packages", packages.len())
+            .context("writing package list")?;
+        if packages.is_empty() {
+            writeln!(
+                output,
+                "   No managed packages. Add one with br install <package>."
+            )
+            .context("writing package list")?;
+        }
     }
     Ok(())
 }
@@ -48,6 +100,8 @@ fn edit_packages(
         .iter()
         .map(|package| parse(package))
         .collect::<Result<Vec<_>>>()?;
+    ui::section("PACKAGES");
+    ui::detail("Requested", &packages.join(", "));
     let _lock = MutationLock::acquire()?;
     let package_path = state::package_path();
     let package_snapshot = package::snapshot(&package_path)?;
@@ -61,8 +115,10 @@ fn edit_packages(
     if let Some((_, staged_source)) = staged_generation
         && !state::same_source(&staged_source, &running_source)
     {
-        println!(
-            "Warning: an OS update is staged. This package change will activate the older pinned generation with the updated package list, then build and stage the updated OS generation."
+        ui::status(
+            "WARN",
+            "An OS update is staged. This package change will activate the older pinned generation with the updated package list, then build and stage the updated OS generation.",
+            ui::Tone::Warning,
         );
         return edit_packages_across_source_change(
             &package_path,
@@ -81,7 +137,7 @@ fn edit_packages(
     match system::pipeline(&source, Action::Switch) {
         Ok(_) => {
             state::persist(&source)?;
-            println!("Package list updated and system activated.");
+            ui::success("Package list updated and system activated.");
             Ok(())
         }
         Err(error) => {
@@ -105,13 +161,15 @@ fn edit_packages_across_source_change(
     mut running_source: state::SourceState,
     mut updated_source: state::SourceState,
 ) -> Result<()> {
-    println!(
-        "Building and activating pinned source {}...",
-        running_source
+    ui::section("PINNED GENERATION");
+    ui::detail(
+        "Source",
+        &running_source
             .source_store_path
             .as_deref()
             .unwrap_or(std::path::Path::new(&running_source.source))
             .display()
+            .to_string(),
     );
 
     match system::pipeline(&running_source, Action::Switch) {
@@ -130,13 +188,15 @@ fn edit_packages_across_source_change(
         Err(error) => return Err(error),
     }
 
-    println!(
-        "Building updated generation from {}...",
-        updated_source
+    ui::section("UPDATED GENERATION");
+    ui::detail(
+        "Source",
+        &updated_source
             .source_store_path
             .as_deref()
             .unwrap_or(std::path::Path::new(&updated_source.source))
             .display()
+            .to_string(),
     );
 
     running_source
@@ -160,8 +220,8 @@ fn edit_packages_across_source_change(
         )
     })?;
 
-    println!(
-        "Package list updated; current generation activated and OS update staged for next boot."
+    ui::success(
+        "Package list updated; current generation activated and OS update staged for next boot.",
     );
     Ok(())
 }
@@ -189,6 +249,8 @@ fn update(switch: bool, branch: Option<String>) -> Result<()> {
             .clone()
             .unwrap_or_else(|| "github:thundertheidiot/brainrotos".into()),
     };
+    ui::section("SOURCE");
+    ui::detail("Reference", &update_ref);
     let mut candidate = system::resolve_source(&update_ref)?;
     candidate.update_ref = Some(update_ref);
     candidate.configuration = if previous.configuration.is_empty() {
@@ -211,7 +273,7 @@ fn update(switch: bool, branch: Option<String>) -> Result<()> {
     } else {
         "staged for next boot"
     };
-    println!("OS update {result}.");
+    ui::success(&format!("OS update {result}."));
     Ok(())
 }
 

@@ -1,11 +1,12 @@
 use crate::state::{self, SourceState};
+use crate::ui;
 use anyhow::{Context, Result, anyhow, bail};
 use dialoguer::Confirm;
-use indicatif::{ProgressBar, ProgressStyle};
+use serde::Deserialize;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 use std::{error::Error, fmt};
 
 const DEFAULT_SOURCE: &str = "github:thundertheidiot/brainrotos";
@@ -33,6 +34,7 @@ impl Error for InitialBuildFailure {
 
 pub(crate) fn resolve_source(reference: &str) -> Result<SourceState> {
     let output = command_output(
+        "Resolving source",
         "nix",
         &[
             "--extra-experimental-features",
@@ -55,6 +57,8 @@ pub(crate) fn branch_reference(branch: &str) -> Result<String> {
 }
 
 pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> {
+    ui::detail("Configuration", &source.configuration);
+    ui::section("BUILD");
     let src = source
         .source_store_path
         .as_ref()
@@ -81,6 +85,7 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
         source.configuration
     );
     let output = command_output(
+        "Building system generation",
         "nix",
         &[
             "--extra-experimental-features",
@@ -121,12 +126,22 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
 
     let current = fs::canonicalize("/run/current-system")
         .unwrap_or_else(|_| PathBuf::from("/run/current-system"));
+    ui::section("CHANGES");
     print_diff(&current, Path::new(&closure))?;
 
     if action == Action::Switch {
         confirm_switch()?;
     }
 
+    ui::section("ACTIVATION");
+    ui::detail(
+        "Action",
+        if action == Action::Boot {
+            "staging for next boot"
+        } else {
+            "activating generation"
+        },
+    );
     run_status(
         "nixos-rebuild",
         &[
@@ -146,14 +161,18 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
 
 fn print_diff(old: &Path, new: &Path) -> Result<()> {
     yansi::whenever(yansi::Condition::from(|| {
-        io::stdout().is_terminal()
-            && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
-            && yansi::Condition::clicolor()
+        ui::color_enabled(io::stdout().is_terminal())
     }));
     // Avoid immutable SQLite reads while Nix may be updating the store database.
     let report = dix::query_diff_report(old, new, true)
         .map_err(|error| anyhow!("querying system diff: {error:#}"))?;
-    write_diff(&mut io::stdout().lock(), old, new, &report)
+    write_diff(
+        &mut io::stdout().lock(),
+        old,
+        new,
+        &report,
+        ui::color_enabled(io::stdout().is_terminal()),
+    )
 }
 
 fn write_diff(
@@ -161,12 +180,23 @@ fn write_diff(
     old: &Path,
     new: &Path,
     report: &dix::DiffReport,
+    color: bool,
 ) -> Result<()> {
     use std::fmt::Write as _;
 
     let mut rendered = String::new();
-    writeln!(rendered, "<<< {}", old.display())?;
-    writeln!(rendered, ">>> {}", new.display())?;
+    writeln!(
+        rendered,
+        "{} {}",
+        ui::paint("<<<", ui::Tone::Muted, color),
+        ui::paint(&old.display().to_string(), ui::Tone::Muted, color)
+    )?;
+    writeln!(
+        rendered,
+        "{} {}",
+        ui::paint(">>>", ui::Tone::Value, color),
+        ui::paint(&new.display().to_string(), ui::Tone::Muted, color)
+    )?;
     dix::write_diff_report(&mut rendered, report).context("rendering system diff")?;
     output
         .write_all(rendered.as_bytes())
@@ -178,7 +208,11 @@ fn confirm_switch() -> Result<()> {
         bail!("switch activation requires interactive confirmation");
     }
 
-    let confirmed = Confirm::new()
+    ui::section("CONFIRM");
+    let theme = ui::ConfirmTheme {
+        color: ui::color_enabled(io::stderr().is_terminal()),
+    };
+    let confirmed = Confirm::with_theme(&theme)
         .with_prompt("Activate this system generation now?")
         .default(false)
         .wait_for_newline(true)
@@ -192,32 +226,119 @@ fn confirm_switch() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn generations() -> Result<()> {
-    let output = command_output("nixos-rebuild", &["list-generations", "--json"])
-        .or_else(|_| command_output("nixos-rebuild", &["list-generations"]))?;
+pub(crate) fn generations(json: bool) -> Result<()> {
+    if !json && io::stdout().is_terminal() {
+        ui::section("GENERATIONS");
+    }
+    let result = command_output(
+        "Loading generations",
+        "nixos-rebuild",
+        &["list-generations", "--json"],
+    );
+    let output = match result {
+        Ok(output) => output,
+        Err(error) if json => return Err(error),
+        Err(_) => {
+            let output = command_output(
+                "Loading generations",
+                "nixos-rebuild",
+                &["list-generations"],
+            )?;
+            return io::stdout()
+                .write_all(&output)
+                .context("writing generation list");
+        }
+    };
 
-    io::stdout().write_all(&output)?;
+    if json {
+        return io::stdout()
+            .write_all(&output)
+            .context("writing generation JSON");
+    }
+    let mut generations: Vec<Generation> =
+        serde_json::from_slice(&output).context("parsing generation list")?;
+    generations.sort_by_key(|generation| generation.id);
+    let terminal = io::stdout().is_terminal();
+    write_generations(
+        &mut io::stdout().lock(),
+        &generations,
+        usize::from(dialoguer::console::Term::stdout().size().1).min(80),
+        ui::color_enabled(terminal),
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Generation {
+    #[serde(rename = "generation")]
+    id: u64,
+    date: String,
+    nixos_version: String,
+    kernel_version: String,
+    configuration_revision: String,
+    specialisations: Vec<String>,
+    current: bool,
+}
+
+fn write_generations(
+    output: &mut impl Write,
+    generations: &[Generation],
+    width: usize,
+    color: bool,
+) -> Result<()> {
+    if generations.is_empty() {
+        writeln!(output, "   No system generations found.").context("writing generation list")?;
+    }
+    for generation in generations {
+        writeln!(
+            output,
+            "\n{}",
+            ui::separator(&format!("GENERATION {}", generation.id), width, color)
+        )
+        .context("writing generation list")?;
+        if generation.current {
+            writeln!(
+                output,
+                "   {}",
+                ui::paint("Selected system profile", ui::Tone::Success, color)
+            )
+            .context("writing generation list")?;
+        }
+        for (label, value) in [
+            ("Created", &generation.date),
+            ("NixOS", &generation.nixos_version),
+            ("Kernel", &generation.kernel_version),
+            ("Revision", &generation.configuration_revision),
+        ] {
+            if !value.is_empty() {
+                writeln!(
+                    output,
+                    "   {}  {}",
+                    ui::paint(&format!("{label:<10}"), ui::Tone::Muted, color),
+                    ui::paint(value, ui::Tone::Value, color)
+                )
+                .context("writing generation list")?;
+            }
+        }
+        if !generation.specialisations.is_empty() {
+            writeln!(
+                output,
+                "   {}  {}",
+                ui::paint("Variants  ", ui::Tone::Muted, color),
+                ui::paint(
+                    &generation.specialisations.join(", "),
+                    ui::Tone::Accent,
+                    color
+                )
+            )
+            .context("writing generation list")?;
+        }
+    }
     Ok(())
 }
 
-fn spinner(message: &str) -> ProgressBar {
-    if !io::stderr().is_terminal() {
-        return ProgressBar::hidden();
-    }
-    let bar = ProgressBar::new_spinner();
-    bar.set_message(message.to_owned());
-
-    let style = ProgressStyle::with_template("{spinner:.cyan} {msg}")
-        .expect("the static spinner template is valid");
-
-    bar.set_style(style);
-    bar.enable_steady_tick(std::time::Duration::from_millis(100));
-
-    bar
-}
-
-fn command_output(program: &str, args: &[&str]) -> Result<Vec<u8>> {
-    let bar = spinner(&format!("Running {program}"));
+fn command_output(message: &str, program: &str, args: &[&str]) -> Result<Vec<u8>> {
+    let bar = ui::spinner(message);
 
     let result = Command::new(program)
         .args(args)
@@ -231,12 +352,21 @@ fn command_output(program: &str, args: &[&str]) -> Result<Vec<u8>> {
         bail!("{program} failed with {}", status_text(output.status));
     }
 
+    if io::stderr().is_terminal() {
+        ui::status("OK", message, ui::Tone::Success);
+    }
+
     Ok(output.stdout)
 }
 
 pub(crate) fn run_status(program: &str, args: &[&str]) -> Result<()> {
-    let status = Command::new(program)
-        .args(args)
+    let mut command = Command::new(program);
+    command.args(args);
+    if program == "nix-store" && args.contains(&"--add-root") {
+        // GC root registration prints its bookkeeping link, not user-facing output.
+        command.stdout(Stdio::null());
+    }
+    let status = command
         .status()
         .with_context(|| format!("starting {program}"))?;
 
@@ -281,7 +411,14 @@ mod tests {
         };
         let report = dix::diff_store_snapshots(&empty_snapshot(), &new);
         let mut output = Vec::new();
-        write_diff(&mut output, Path::new("/old"), Path::new("/new"), &report).unwrap();
+        write_diff(
+            &mut output,
+            Path::new("/old"),
+            Path::new("/new"),
+            &report,
+            false,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.starts_with("<<< /old\n>>> /new\n"));
         assert!(output.contains("ADDED\n[A+] example 1.0"));
@@ -310,6 +447,7 @@ mod tests {
             Path::new("/old"),
             Path::new("/new"),
             &report,
+            false,
         )
         .unwrap_err();
         assert_eq!(error.to_string(), "writing system diff");
