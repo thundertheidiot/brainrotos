@@ -10,12 +10,14 @@ pub(crate) struct Cli {
 /// Commands supported by the `br` executable.
 #[derive(Subcommand)]
 pub(crate) enum Commands {
+    #[command(visible_alias = "u")]
     Update {
         #[arg(long, action = ArgAction::SetTrue)]
         switch: bool,
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
     },
+    #[command(visible_alias = "i")]
     Install {
         #[arg(required = true, value_name = "PACKAGE")]
         packages: Vec<String>,

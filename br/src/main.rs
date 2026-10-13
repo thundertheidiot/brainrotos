@@ -36,56 +36,62 @@ fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
         .iter()
         .map(|package| parse(package))
         .collect::<Result<Vec<_>>>()?;
-
     let _lock = MutationLock::acquire()?;
     let package_path = state::package_path();
-
-    if no_switch {
-        package::update(&package_path, &parsed)?;
-        println!("Package list updated; no build or activation was requested.");
-        return Ok(());
-    }
-
     let package_snapshot = package::snapshot(&package_path)?;
     package::update(&package_path, &parsed)?;
 
     let mut source = state::load()?;
     let pending = state::refresh_pending(&mut source);
-    if pending && !switch {
+    if !no_switch && pending && !switch {
         eprintln!(
             "Warning: an OS update is pending for the next boot. This install will also be staged; pass --switch to activate immediately."
         );
     }
 
-    let action = match (switch, pending) {
-        (true, _) | (false, false) => Action::Switch,
-        (false, true) => Action::Boot,
+    let action = match (no_switch, switch, pending) {
+        (true, _, _) => Action::BuildOnly,
+        (false, true, _) | (false, false, false) => Action::Switch,
+        (false, false, true) => Action::Boot,
     };
 
     source = state::selected_source(&source)?;
     match system::pipeline(&source, action) {
-        Ok(generation) => {
-            source.pending_generation = (action == Action::Boot).then_some(generation);
-            state::persist(&source)?;
-            println!(
-                "Package list updated and system {}.",
-                if action == Action::Boot {
-                    "staged for next boot"
-                } else {
-                    "activated"
-                }
-            );
-            Ok(())
-        }
-        Err(error) => {
-            if let Some(build_error) = error.downcast_ref::<system::InitialBuildFailure>() {
-                let build_message = format!("{build_error:#}");
-                return match package::restore(&package_path, package_snapshot) {
-                    Ok(()) => Err(anyhow!("{build_message}; package list was restored")),
-                    Err(restore_error) => Err(anyhow!(
-                        "{build_message}, and restoring the package list also failed: {restore_error:#}"
-                    )),
+        Ok(generation) => match action {
+            Action::BuildOnly => {
+                println!(
+                    "Package list updated and system generation built; no activation was requested."
+                );
+                Ok(())
+            }
+            Action::Boot | Action::Switch => {
+                source.pending_generation = (action == Action::Boot).then_some(generation);
+                state::persist(&source)?;
+
+                let status = match action {
+                    Action::Boot => "staged for next boot",
+                    Action::Switch => "activated",
+                    Action::BuildOnly => unreachable!(),
                 };
+                println!("Package list updated and system {status}.");
+                Ok(())
+            }
+        },
+        Err(error) => {
+            if action == Action::BuildOnly {
+                return restore_packages_after_build_failure(
+                    &package_path,
+                    package_snapshot,
+                    &format!("{error:#}"),
+                );
+            }
+
+            if let Some(build_error) = error.downcast_ref::<system::InitialBuildFailure>() {
+                return restore_packages_after_build_failure(
+                    &package_path,
+                    package_snapshot,
+                    &format!("{build_error:#}"),
+                );
             }
             Err(anyhow!(
                 "package list was updated, but a later build or activation phase failed: {error:#}"
@@ -94,10 +100,22 @@ fn install(packages: &[String], switch: bool, no_switch: bool) -> Result<()> {
     }
 }
 
+fn restore_packages_after_build_failure(
+    package_path: &std::path::Path,
+    package_snapshot: package::Snapshot,
+    build_message: &str,
+) -> Result<()> {
+    match package::restore(package_path, package_snapshot) {
+        Ok(()) => Err(anyhow!("{build_message}; package list was restored")),
+        Err(restore_error) => Err(anyhow!(
+            "{build_message}, and restoring the package list also failed: {restore_error:#}"
+        )),
+    }
+}
+
 fn update(switch: bool, branch: Option<String>) -> Result<()> {
     let _lock = MutationLock::acquire()?;
     let previous = state::load_optional()?.unwrap_or_else(state::default);
-
     let update_ref = match branch {
         Some(branch) => system::branch_reference(&branch)?,
         None => previous
@@ -105,7 +123,6 @@ fn update(switch: bool, branch: Option<String>) -> Result<()> {
             .clone()
             .unwrap_or_else(|| "github:thundertheidiot/brainrotos".into()),
     };
-
     let mut candidate = system::resolve_source(&update_ref)?;
     candidate.update_ref = Some(update_ref);
     candidate.configuration = if previous.configuration.is_empty() {
@@ -113,11 +130,9 @@ fn update(switch: bool, branch: Option<String>) -> Result<()> {
     } else {
         previous.configuration
     };
-
     let action = if switch { Action::Switch } else { Action::Boot };
     let generation = system::pipeline(&candidate, action)?;
     candidate.pending_generation = (action == Action::Boot).then_some(generation);
-
     state::persist(&candidate).map_err(|error| {
         anyhow!(
             "system {} successfully, but source state could not be persisted: {error:#}",
