@@ -89,6 +89,7 @@ dependencies = [
  "dix",
  "fs2",
  "indicatif",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",

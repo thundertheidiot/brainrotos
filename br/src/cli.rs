@@ -45,7 +45,24 @@ pub(crate) enum Commands {
         packages: Vec<String>,
     },
     /// List packages in the managed package list.
+    #[command(visible_alias = "l")]
     List,
+    /// Search indexed package names, showing tip versions and version counts.
+    #[command(visible_alias = "s")]
+    Search {
+        /// Literal, case-insensitive substring of a package attribute name.
+        #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        query: String,
+        /// List every matching indexed name@version pair instead of grouping.
+        #[arg(long)]
+        versions: bool,
+        /// Match the package attribute name exactly.
+        #[arg(long, conflicts_with = "nonexact")]
+        exact: bool,
+        /// Match package attribute names by substring.
+        #[arg(long, conflicts_with = "exact")]
+        nonexact: bool,
+    },
     /// Show available system generations.
     Generations {
         /// Print raw generation data as JSON.
@@ -81,6 +98,9 @@ mod tests {
         }
         for args in [
             vec!["br", "list"],
+            vec!["br", "search", "firefox"],
+            vec!["br", "search", "firefox", "--versions"],
+            vec!["br", "search", "firefox", "--exact", "--versions"],
             vec!["br", "generations"],
             vec!["br", "generations", "--json"],
         ] {

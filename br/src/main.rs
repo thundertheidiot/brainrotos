@@ -2,6 +2,7 @@
 
 mod cli;
 mod package;
+mod search;
 mod state;
 mod system;
 mod ui;
@@ -46,11 +47,14 @@ fn run(cli: Cli) -> Result<()> {
         return Err(error).context("re-executing br with sudo");
     }
 
-    if !matches!(cli.command, Commands::List | Commands::Generations { .. })
-        || std::io::stdout().is_terminal()
+    if !matches!(
+        cli.command,
+        Commands::List | Commands::Generations { .. } | Commands::Search { .. }
+    ) || std::io::stdout().is_terminal()
     {
         ui::heading(match &cli.command {
             Commands::List => "list",
+            Commands::Search { .. } => "search",
             Commands::Generations { .. } => "generations",
             Commands::Install { .. } => "install",
             Commands::Uninstall { .. } => "uninstall",
@@ -59,6 +63,12 @@ fn run(cli: Cli) -> Result<()> {
     }
     match cli.command {
         Commands::List => list_packages(),
+        Commands::Search {
+            query,
+            versions,
+            exact,
+            nonexact,
+        } => search::search(&query, versions, exact || (versions && !nonexact)),
         Commands::Generations { json } => system::generations(json),
         Commands::Install { packages } => edit_packages(&packages, package::update),
         Commands::Uninstall { packages } => edit_packages(&packages, package::remove),
