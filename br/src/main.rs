@@ -1,5 +1,3 @@
-#![warn(clippy::pedantic)]
-
 mod cli;
 mod package;
 mod search;
@@ -70,9 +68,13 @@ fn run(cli: Cli) -> Result<()> {
             nonexact,
         } => search::search(&query, versions, exact || (versions && !nonexact)),
         Commands::Generations { json } => system::generations(json),
-        Commands::Install { packages } => edit_packages(&packages, package::update),
-        Commands::Uninstall { packages } => edit_packages(&packages, package::remove),
-        Commands::Update { switch, branch } => update(switch, branch),
+        Commands::Install { packages, yes } => edit_packages(&packages, package::update, yes),
+        Commands::Uninstall { packages, yes } => edit_packages(&packages, package::remove, yes),
+        Commands::Update {
+            switch,
+            yes,
+            branch,
+        } => update(switch, yes, branch),
     }
 }
 
@@ -125,21 +127,15 @@ fn list_packages() -> Result<()> {
     Ok(())
 }
 
-fn edit_packages(
-    packages: &[String],
-    edit: fn(&std::path::Path, &[package::Package]) -> Result<()>,
-) -> Result<()> {
-    let parsed = packages
-        .iter()
-        .map(|package| parse(package))
-        .collect::<Result<Vec<_>>>()?;
-    ui::section("PACKAGES");
-    ui::detail("Requested", &packages.join(", "));
-    let _lock = MutationLock::acquire()?;
-    let package_path = state::package_path();
-    let package_snapshot = package::snapshot(&package_path)?;
-    edit(&package_path, &parsed)?;
+enum Plan {
+    Direct(state::SourceState),
+    AcrossSourceChange {
+        running: state::SourceState,
+        updated: state::SourceState,
+    },
+}
 
+fn plan_switch() -> Result<Plan> {
     let mut source = state::load()?;
     let running_source = state::running_source()?;
     let staged_generation =
@@ -153,12 +149,10 @@ fn edit_packages(
             "An OS update is staged. This package change will activate the older pinned generation with the updated package list, then build and stage the updated OS generation.",
             ui::Tone::Warning,
         );
-        return edit_packages_across_source_change(
-            &package_path,
-            package_snapshot,
-            state::selected_source(&running_source)?,
-            state::selected_source(&staged_source)?,
-        );
+        return Ok(Plan::AcrossSourceChange {
+            running: state::selected_source(&running_source)?,
+            updated: state::selected_source(&staged_source)?,
+        });
     }
 
     if !state::same_source(&source, &running_source) {
@@ -166,25 +160,61 @@ fn edit_packages(
     }
     source.pending_generation = None;
 
-    source = state::selected_source(&source)?;
-    match system::pipeline(&source, Action::Switch) {
-        Ok(_) => {
-            state::persist(&source)?;
-            ui::success("Package list updated and system activated.");
-            Ok(())
-        }
+    Ok(Plan::Direct(state::selected_source(&source)?))
+}
+
+fn edit_packages(
+    packages: &[String],
+    edit: fn(&std::path::Path, &[package::Package]) -> Result<()>,
+    yes: bool,
+) -> Result<()> {
+    let parsed = packages
+        .iter()
+        .map(|package| parse(package))
+        .collect::<Result<Vec<_>>>()?;
+    ui::section("PACKAGES");
+    ui::detail("Requested", &packages.join(", "));
+    let _lock = MutationLock::acquire()?;
+    let package_path = state::package_path();
+    let package_snapshot = package::snapshot(&package_path)?;
+    edit(&package_path, &parsed)?;
+
+    // nothing has been activated until the pipeline reaches nixos-rebuild, so
+    // any failure before that point rolls the package list back
+    let plan = match plan_switch() {
+        Ok(plan) => plan,
         Err(error) => {
-            if let Some(build_error) = error.downcast_ref::<system::InitialBuildFailure>() {
-                return restore_packages_after_build_failure(
-                    &package_path,
-                    package_snapshot,
-                    &format!("{build_error:#}"),
-                );
-            }
-            Err(anyhow!(
-                "package list was updated, but a later build or activation phase failed: {error:#}"
-            ))
+            return Err(restore_packages(
+                &package_path,
+                package_snapshot,
+                &format!("{error:#}"),
+            ));
         }
+    };
+
+    match plan {
+        Plan::AcrossSourceChange { running, updated } => edit_packages_across_source_change(
+            &package_path,
+            package_snapshot,
+            running,
+            updated,
+            yes,
+        ),
+        Plan::Direct(source) => match system::pipeline(&source, Action::Switch, yes) {
+            Ok(_) => {
+                state::persist(&source)?;
+                ui::success("Package list updated and system activated.");
+                Ok(())
+            }
+            Err(error) if error.is::<system::NotActivated>() => Err(restore_packages(
+                &package_path,
+                package_snapshot,
+                &format!("{error:#}"),
+            )),
+            Err(error) => Err(anyhow!(
+                "package list was updated, but a later build or activation phase failed: {error:#}"
+            )),
+        },
     }
 }
 
@@ -193,6 +223,7 @@ fn edit_packages_across_source_change(
     package_snapshot: package::Snapshot,
     mut running_source: state::SourceState,
     mut updated_source: state::SourceState,
+    yes: bool,
 ) -> Result<()> {
     ui::section("PINNED GENERATION");
     ui::detail(
@@ -205,18 +236,14 @@ fn edit_packages_across_source_change(
             .to_string(),
     );
 
-    match system::pipeline(&running_source, Action::Switch) {
+    match system::pipeline(&running_source, Action::Switch, yes) {
         Ok(_) => {}
-        Err(error)
-            if error
-                .downcast_ref::<system::InitialBuildFailure>()
-                .is_some() =>
-        {
-            return restore_packages_after_build_failure(
+        Err(error) if error.is::<system::NotActivated>() => {
+            return Err(restore_packages(
                 package_path,
                 package_snapshot,
                 &format!("{error:#}"),
-            );
+            ));
         }
         Err(error) => return Err(error),
     }
@@ -241,11 +268,12 @@ fn edit_packages_across_source_change(
     state::persist(&running_source).context(
         "the current OS generation was activated, but its source state could not be persisted",
     )?;
-    let updated_generation = system::pipeline(&updated_source, Action::Boot).map_err(|error| {
-        anyhow!(
-            "the current OS generation was activated with the updated package list, but the updated OS generation could not be staged: {error:#}"
-        )
-    })?;
+    let updated_generation =
+        system::pipeline(&updated_source, Action::Boot, yes).map_err(|error| {
+            anyhow!(
+                "the current OS generation was activated with the updated package list, but the updated OS generation could not be staged: {error:#}"
+            )
+        })?;
     updated_source.pending_generation = Some(updated_generation);
     state::persist(&updated_source).map_err(|error| {
         anyhow!(
@@ -259,20 +287,22 @@ fn edit_packages_across_source_change(
     Ok(())
 }
 
-fn restore_packages_after_build_failure(
+/// Restores the package list after a failure or cancellation that happened
+/// before anything was activated, and returns the error to report.
+fn restore_packages(
     package_path: &std::path::Path,
     package_snapshot: package::Snapshot,
-    build_message: &str,
-) -> Result<()> {
+    reason: &str,
+) -> anyhow::Error {
     match package::restore(package_path, package_snapshot) {
-        Ok(()) => Err(anyhow!("{build_message}; package list was restored")),
-        Err(restore_error) => Err(anyhow!(
-            "{build_message}, and restoring the package list also failed: {restore_error:#}"
-        )),
+        Ok(()) => anyhow!("{reason}; package list was restored"),
+        Err(restore_error) => {
+            anyhow!("{reason}, and restoring the package list also failed: {restore_error:#}")
+        }
     }
 }
 
-fn update(switch: bool, branch: Option<String>) -> Result<()> {
+fn update(switch: bool, yes: bool, branch: Option<String>) -> Result<()> {
     let _lock = MutationLock::acquire()?;
     let previous = state::load_optional()?.unwrap_or_else(state::default);
     let update_ref = match branch {
@@ -280,7 +310,7 @@ fn update(switch: bool, branch: Option<String>) -> Result<()> {
         None => previous
             .update_ref
             .clone()
-            .unwrap_or_else(|| "github:thundertheidiot/brainrotos".into()),
+            .unwrap_or_else(|| state::DEFAULT_SOURCE.into()),
     };
     ui::section("SOURCE");
     ui::detail("Reference", &update_ref);
@@ -292,7 +322,7 @@ fn update(switch: bool, branch: Option<String>) -> Result<()> {
         previous.configuration
     };
     let action = if switch { Action::Switch } else { Action::Boot };
-    let generation = system::pipeline(&candidate, action)?;
+    let generation = system::pipeline(&candidate, action, yes)?;
     candidate.pending_generation = (action == Action::Boot).then_some(generation);
     state::persist(&candidate).map_err(|error| {
         anyhow!(
@@ -334,6 +364,52 @@ mod tests {
             Cli::try_parse_from(["br", "rm", "vim"]).unwrap().command,
             Commands::Uninstall { .. }
         ));
+    }
+
+    #[test]
+    fn yes_flag_is_accepted_for_mutating_commands() {
+        for args in [
+            vec!["br", "install", "vim", "-y"],
+            vec!["br", "install", "vim", "--yes"],
+            vec!["br", "uninstall", "vim", "-y"],
+            vec!["br", "update", "--switch", "-y"],
+            vec!["br", "update", "--switch", "--yes"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+        // confirmation only exists when switching
+        assert!(Cli::try_parse_from(["br", "update", "--yes"]).is_err());
+        assert!(Cli::try_parse_from(["br", "install", "vim", "-y", "--switch"]).is_err());
+        let Commands::Install { yes, .. } =
+            Cli::try_parse_from(["br", "i", "vim"]).unwrap().command
+        else {
+            panic!("expected install");
+        };
+        assert!(!yes);
+    }
+
+    #[test]
+    fn failure_before_activation_restores_the_package_list() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("packages.json");
+        let original = b"[ \"git\" ]\n";
+        std::fs::write(&path, original).unwrap();
+
+        let snapshot = package::snapshot(&path).unwrap();
+        package::update(&path, &[parse("ripgrep").unwrap()]).unwrap();
+        assert_ne!(std::fs::read(&path).unwrap(), original);
+
+        let error = restore_packages(&path, snapshot, "switch activation cancelled");
+        assert_eq!(
+            error.to_string(),
+            "switch activation cancelled; package list was restored"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn assume_yes_skips_the_confirmation() {
+        assert!(system::confirm_switch(true).is_ok());
     }
 
     #[test]

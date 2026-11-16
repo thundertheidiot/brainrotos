@@ -28,6 +28,9 @@ pub(crate) enum Commands {
         /// Activate immediately after interactive confirmation.
         #[arg(long, action = ArgAction::SetTrue)]
         switch: bool,
+        /// Skip the interactive confirmation of `--switch`.
+        #[arg(short, long, requires = "switch")]
+        yes: bool,
         /// Update from a specific branch.
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
@@ -37,12 +40,18 @@ pub(crate) enum Commands {
     Install {
         #[arg(required = true, value_name = "PACKAGE")]
         packages: Vec<String>,
+        /// Skip the interactive confirmation before activating.
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Remove packages from the managed package list and activate the system.
     #[command(visible_alias = "rm")]
     Uninstall {
         #[arg(required = true, value_name = "PACKAGE")]
         packages: Vec<String>,
+        /// Skip the interactive confirmation before activating.
+        #[arg(short, long)]
+        yes: bool,
     },
     /// List packages in the managed package list.
     #[command(visible_alias = "l")]

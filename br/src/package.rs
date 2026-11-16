@@ -1,3 +1,4 @@
+use crate::state;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -78,7 +79,7 @@ pub(crate) fn update(path: &Path, requested: &[Package]) -> Result<()> {
         }
     }
 
-    atomic_json(path, &existing)
+    state::atomic_json(path, &existing, Some(0o644))
 }
 
 pub(crate) fn remove(path: &Path, requested: &[Package]) -> Result<()> {
@@ -105,7 +106,7 @@ pub(crate) fn remove(path: &Path, requested: &[Package]) -> Result<()> {
             .iter()
             .any(|package| identity(entry) == identity(package))
     });
-    atomic_json(path, &existing)
+    state::atomic_json(path, &existing, Some(0o644))
 }
 
 pub(crate) fn snapshot(path: &Path) -> Result<Snapshot> {
@@ -151,23 +152,6 @@ pub(crate) fn restore(path: &Path, snapshot: Snapshot) -> Result<()> {
             }
         },
     }
-    File::open(parent)?.sync_all()?;
-    Ok(())
-}
-
-fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
-    fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    let mut temp = NamedTempFile::new_in(parent)?;
-    serde_json::to_writer_pretty(&mut temp, value)?;
-    writeln!(temp)?;
-    temp.as_file()
-        .set_permissions(fs::Permissions::from_mode(0o644))?;
-    temp.persist(path)
-        .map_err(|error| error.error)
-        .with_context(|| format!("replacing {}", path.display()))?;
     File::open(parent)?.sync_all()?;
     Ok(())
 }

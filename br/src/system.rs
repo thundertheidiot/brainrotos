@@ -9,28 +9,24 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::{error::Error, fmt};
 
-const DEFAULT_SOURCE: &str = "github:thundertheidiot/brainrotos";
-
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Action {
     Boot,
     Switch,
 }
 
+/// A failure or cancellation before activation started, nothing on the
+/// running system has been changed when this is returned.
 #[derive(Debug)]
-pub(crate) struct InitialBuildFailure(anyhow::Error);
+pub(crate) struct NotActivated(anyhow::Error);
 
-impl fmt::Display for InitialBuildFailure {
+impl fmt::Display for NotActivated {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "initial Nix build failed: {:#}", self.0)
+        write!(formatter, "{:#}", self.0)
     }
 }
 
-impl Error for InitialBuildFailure {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
+impl Error for NotActivated {}
 
 pub(crate) fn resolve_source(reference: &str) -> Result<SourceState> {
     let output = command_output(
@@ -53,10 +49,47 @@ pub(crate) fn branch_reference(branch: &str) -> Result<String> {
     if branch.trim().is_empty() || branch.chars().any(char::is_whitespace) {
         bail!("branch name must be non-empty and contain no whitespace");
     }
-    Ok(format!("{DEFAULT_SOURCE}/{branch}"))
+    Ok(format!("{}/{branch}", state::DEFAULT_SOURCE))
 }
 
-pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> {
+/// Builds `source` and activates it. Everything up to the activation itself
+/// (build, GC roots, diff, confirmation) fails with [`NotActivated`].
+pub(crate) fn pipeline(source: &SourceState, action: Action, assume_yes: bool) -> Result<PathBuf> {
+    let (_roots, closure) = prepare(source, action, assume_yes).map_err(NotActivated)?;
+
+    ui::section("ACTIVATION");
+    ui::detail(
+        "Action",
+        if action == Action::Boot {
+            "staging for next boot"
+        } else {
+            "activating generation"
+        },
+    );
+    run_status(
+        "nixos-rebuild",
+        &[
+            "--no-reexec",
+            "--store-path",
+            &closure,
+            if action == Action::Boot {
+                "boot"
+            } else {
+                "switch"
+            },
+        ],
+    )?;
+
+    Ok(closure.into())
+}
+
+/// Builds the system and confirms the switch. Returns the GC roots, which
+/// must be kept alive until activation is done, and the closure path.
+fn prepare(
+    source: &SourceState,
+    action: Action,
+    assume_yes: bool,
+) -> Result<(tempfile::TempDir, String)> {
     ui::detail("Configuration", &source.configuration);
     ui::section("BUILD");
     let src = source
@@ -101,15 +134,14 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
             &target,
         ],
     )
-    .map_err(InitialBuildFailure)?;
+    .context("initial Nix build failed")?;
 
-    let output = String::from_utf8(output).map_err(|error| {
-        InitialBuildFailure(anyhow!("nix build returned non-UTF8 output: {error}"))
-    })?;
+    let output = String::from_utf8(output)
+        .map_err(|error| anyhow!("nix build returned non-UTF8 output: {error}"))?;
     let closure = output
         .lines()
         .last()
-        .ok_or_else(|| InitialBuildFailure(anyhow!("nix build returned no output path")))?
+        .ok_or_else(|| anyhow!("nix build returned no output path"))?
         .trim()
         .to_string();
 
@@ -130,33 +162,10 @@ pub(crate) fn pipeline(source: &SourceState, action: Action) -> Result<PathBuf> 
     print_diff(&current, Path::new(&closure))?;
 
     if action == Action::Switch {
-        confirm_switch()?;
+        confirm_switch(assume_yes)?;
     }
 
-    ui::section("ACTIVATION");
-    ui::detail(
-        "Action",
-        if action == Action::Boot {
-            "staging for next boot"
-        } else {
-            "activating generation"
-        },
-    );
-    run_status(
-        "nixos-rebuild",
-        &[
-            "--no-reexec",
-            "--store-path",
-            &closure,
-            if action == Action::Boot {
-                "boot"
-            } else {
-                "switch"
-            },
-        ],
-    )?;
-
-    Ok(closure.into())
+    Ok((temp, closure))
 }
 
 fn print_diff(old: &Path, new: &Path) -> Result<()> {
@@ -203,9 +212,12 @@ fn write_diff(
         .context("writing system diff")
 }
 
-fn confirm_switch() -> Result<()> {
+pub(crate) fn confirm_switch(assume_yes: bool) -> Result<()> {
+    if assume_yes {
+        return Ok(());
+    }
     if !io::stdin().is_terminal() {
-        bail!("switch activation requires interactive confirmation");
+        bail!("switch activation requires interactive confirmation (pass --yes to skip it)");
     }
 
     ui::section("CONFIRM");
@@ -272,11 +284,17 @@ pub(crate) fn generations(json: bool) -> Result<()> {
 struct Generation {
     #[serde(rename = "generation")]
     id: u64,
+    #[serde(default)]
     date: String,
+    #[serde(default)]
     nixos_version: String,
+    #[serde(default)]
     kernel_version: String,
+    #[serde(default)]
     configuration_revision: String,
+    #[serde(default)]
     specialisations: Vec<String>,
+    #[serde(default)]
     current: bool,
 }
 

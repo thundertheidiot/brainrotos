@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
-const DEFAULT_SOURCE: &str = "github:thundertheidiot/brainrotos";
+pub(crate) const DEFAULT_SOURCE: &str = "github:thundertheidiot/brainrotos";
 const DEFAULT_CONFIGURATION: &str = "base";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,13 +99,28 @@ pub(crate) fn running_source() -> Result<SourceState> {
     source_from_generation_metadata(&contents)
 }
 
-pub(crate) fn latest_staged_generation(current: &Path) -> Result<Option<(PathBuf, SourceState)>> {
-    latest_staged_generation_in(current, Path::new("/nix/var/nix/profiles"))
+/// Time the running system booted, derived from the kernel uptime.
+fn boot_time() -> SystemTime {
+    fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|uptime| uptime.split_whitespace().next()?.parse::<f64>().ok())
+        .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+        .and_then(|uptime| SystemTime::now().checked_sub(uptime))
+        .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
+pub(crate) fn latest_staged_generation(current: &Path) -> Result<Option<(PathBuf, SourceState)>> {
+    latest_staged_generation_in(current, Path::new("/nix/var/nix/profiles"), boot_time())
+}
+
+/// Finds the newest generation staged for the next boot.
+///
+/// Only profile links created after `booted_at` count: higher-numbered
+/// generations that predate the boot were rolled back from, not staged.
 fn latest_staged_generation_in(
     current: &Path,
     profiles_dir: &Path,
+    booted_at: SystemTime,
 ) -> Result<Option<(PathBuf, SourceState)>> {
     let Some(current_number) = profile_generation_number(current, profiles_dir) else {
         return Ok(None);
@@ -118,7 +134,12 @@ fn latest_staged_generation_in(
             let name = name.to_str()?;
             let number = name.strip_prefix("system-")?.strip_suffix("-link")?;
             let number = number.parse::<u64>().ok()?;
-            (number > current_number).then_some((number, entry.path()))
+            if number <= current_number {
+                return None;
+            }
+            // the link itself, not the generation it points to
+            let created = fs::symlink_metadata(entry.path()).ok()?.modified().ok()?;
+            (created > booted_at).then_some((number, entry.path()))
         })
         .collect::<Vec<_>>();
     staged_profiles.sort_unstable_by_key(|(number, _)| *number);
@@ -197,7 +218,7 @@ pub(crate) fn persist(state: &SourceState) -> Result<()> {
         )?;
     }
 
-    atomic_json(&state_path(), state)
+    atomic_json(&state_path(), state, None)
 }
 
 fn profile_generation_number(system: &Path, profiles_dir: &Path) -> Option<u64> {
@@ -276,8 +297,10 @@ pub(crate) fn source_from_metadata(output: &[u8], reference: &str) -> Result<Sou
     })
 }
 
-fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
+/// Atomically replaces `path` with pretty printed JSON, optionally setting its mode.
+pub(crate) fn atomic_json(path: &Path, value: &impl Serialize, mode: Option<u32>) -> Result<()> {
     use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::NamedTempFile;
 
     let parent = path
@@ -289,6 +312,11 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
 
     serde_json::to_writer_pretty(&mut temp, value)?;
     writeln!(temp)?;
+    if let Some(mode) = mode {
+        temp.as_file()
+            .set_permissions(fs::Permissions::from_mode(mode))?;
+    }
+    temp.as_file().sync_all()?;
 
     temp.persist(path)
         .map_err(|error| error.error)
@@ -374,11 +402,79 @@ mod tests {
         symlink(&stale, profiles.join("system-11-link")).unwrap();
         symlink(&staged, profiles.join("system-12-link")).unwrap();
 
-        let (staged_path, source) = latest_staged_generation_in(&current, &profiles)
+        let booted_at = SystemTime::now() - Duration::from_secs(3600);
+        let (staged_path, source) = latest_staged_generation_in(&current, &profiles, booted_at)
             .unwrap()
             .unwrap();
 
         assert_eq!(staged_path, staged);
         assert_eq!(source.source, "updated");
+    }
+
+    /// Sets the modification time of the symlink itself.
+    fn set_link_mtime(link: &Path, time: SystemTime) {
+        use rustix::fs::{AtFlags, CWD, Timespec, Timestamps, utimensat};
+
+        let since_epoch = time.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        let stamp = Timespec {
+            tv_sec: since_epoch.as_secs().try_into().unwrap(),
+            tv_nsec: since_epoch.subsec_nanos().into(),
+        };
+        utimensat(
+            CWD,
+            link,
+            &Timestamps {
+                last_access: stamp,
+                last_modification: stamp,
+            },
+            AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn generations_older_than_the_boot_are_rolled_back_not_staged() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let profiles = directory.path().join("profiles");
+        fs::create_dir(&profiles).unwrap();
+
+        // 10 is running, 11 was rolled back from before this boot, 12 was staged after it
+        let booted_at = SystemTime::now() - Duration::from_secs(3600);
+        let mut systems = Vec::new();
+        for number in [10, 11, 12] {
+            let system = directory.path().join(format!("system-{number}"));
+            fs::create_dir_all(system.join("etc/br")).unwrap();
+            fs::write(
+                system.join("etc/br/source.json"),
+                format!(r#"{{"source":"gen-{number}","configuration":"base"}}"#),
+            )
+            .unwrap();
+            let link = profiles.join(format!("system-{number}-link"));
+            symlink(&system, &link).unwrap();
+            systems.push(system);
+        }
+        let current = &systems[0];
+
+        let before_boot = booted_at - Duration::from_secs(600);
+        set_link_mtime(&profiles.join("system-11-link"), before_boot);
+        set_link_mtime(&profiles.join("system-12-link"), before_boot);
+        assert!(
+            latest_staged_generation_in(current, &profiles, booted_at)
+                .unwrap()
+                .is_none()
+        );
+
+        // only a link created after the boot counts, whatever its target's age
+        set_link_mtime(
+            &profiles.join("system-12-link"),
+            booted_at + Duration::from_secs(60),
+        );
+        let (path, source) = latest_staged_generation_in(current, &profiles, booted_at)
+            .unwrap()
+            .unwrap();
+        assert_eq!(path, systems[2]);
+        assert_eq!(source.source, "gen-12");
     }
 }

@@ -1,5 +1,5 @@
-use std::io::{self, IsTerminal, Write};
 use std::cmp::Ordering;
+use std::io::{self, IsTerminal, Write};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
