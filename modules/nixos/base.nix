@@ -31,7 +31,7 @@ in {
     };
 
     systemd.settings.Manager = {
-      DefaultTimeoutStopSec = "3s";
+      DefaultTimeoutStopSec = "15s";
     };
 
     boot.initrd.availableKernelModules = [

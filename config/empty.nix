@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ lib, ... }:
 let
   inherit (lib) mkDefault mkForce;
 in
@@ -10,7 +10,7 @@ in
       ramcache.v1.enable = mkDefault true;
       flatpak.v1.enable = mkForce false;
 
-      packages.v1.filePath = pkgs.writeText "fake.json" "[]";
+      packages.v1.filePath = null;
     };
   };
 }

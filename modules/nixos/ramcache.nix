@@ -6,7 +6,7 @@
 }: let
   inherit (lib) mkIf;
   inherit (lib.options) mkOption;
-  inherit (lib.types) bool;
+  inherit (lib.types) bool listOf oneOf path package str;
   inherit (lib.strings) concatStringsSep;
   inherit (builtins) toString;
 
@@ -20,6 +20,7 @@ in {
         description = "Enable caching of frequenty used programs to ram on boot.";
       };
       paths = mkOption {
+        type = listOf (oneOf [path package str]);
         apply = map toString;
         default = [];
         description = "Paths to cache.";
@@ -27,13 +28,13 @@ in {
     };
   };
 
-  config = mkIf cfg.enable {
+  config = mkIf (cfg.enable && cfg.paths != []) {
     systemd.services."brainrotos-ram-cache" = {
       enable = true;
       wantedBy = ["graphical.target"];
       path = [pkgs.vmtouch];
       script = ''
-        vmtouch -vltf ${concatStringsSep " " cfg.paths}
+        vmtouch -ltf ${concatStringsSep " " cfg.paths}
       '';
     };
   };

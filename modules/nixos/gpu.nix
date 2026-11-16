@@ -4,22 +4,22 @@
   pkgs,
   ...
 }: let
-  inherit (lib) mkIf mkMerge;
+  inherit (lib) mkIf mkMerge elem;
   inherit (lib.options) mkOption;
   inherit (lib.types) enum;
 
-  cfg = config.brainrotos.gpu.v1;
+  cfg = config.brainrotos.gpu.v1.type;
 in {
   options = {
     brainrotos.gpu.v1.type = mkOption {
       type = enum ["amd" "nvidia" "nvidia-old" "intel" "custom-no-setup" "none"];
-      default = false;
+      default = "none";
       description = "GPU Drivers to install.";
     };
   };
 
   config = mkMerge [
-    (mkIf (cfg != "none") {
+    (mkIf (elem cfg ["amd" "nvidia" "nvidia-old" "intel"]) {
       hardware.graphics.enable = true;
     })
     (mkIf (cfg == "intel") {
@@ -73,5 +73,16 @@ in {
         nvidiaSettings = true;
       };
     })
+    # older cards not supported by the open kernel modules
+    (mkIf (cfg == "nvidia-old") {
+      services.xserver.videoDrivers = ["nvidia"];
+      hardware.nvidia = {
+        package = config.boot.kernelPackages.nvidiaPackages.stable;
+        modesetting.enable = true;
+        open = false;
+        nvidiaSettings = true;
+      };
+    })
+    # "custom-no-setup" and "none" intentionally configure nothing
   ];
 }

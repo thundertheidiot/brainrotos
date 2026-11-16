@@ -64,8 +64,8 @@
               };
             })
             ({ pkgs, ... }: {
-              environment.systemPackages = [ inputs.self.packages.${pkgs.system}.br ];
-              environment.etc."br/multiverse.db".source = inputs.multiverse.packages.${pkgs.system}.index-db;
+              environment.systemPackages = [ inputs.self.packages.${pkgs.stdenv.hostPlatform.system}.br ];
+              environment.etc."br/multiverse.db".source = inputs.multiverse.packages.${pkgs.stdenv.hostPlatform.system}.index-db;
               environment.etc."br/source.json".text = builtins.toJSON {
                 source = inputs.self.outPath;
                 update_ref = "github:thundertheidiot/brainrotos";
@@ -75,7 +75,6 @@
             })
             "${inputs.self.outPath}/modules/nixos"
             "${inputs.self.outPath}/config/${n}"
-            inputs.nix-flatpak.nixosModules.nix-flatpak
           ];
         };
       }

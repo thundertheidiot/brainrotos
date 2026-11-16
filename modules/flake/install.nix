@@ -51,8 +51,13 @@ in
       umount /mnt
     '';
 
+    # VM/TEST INSTALLER ONLY: the generated config enables root ssh login with
+    # the well-known password "password123". Never use it on real hardware.
     packages.quick-install = pkgs.writers.writeBashBin "quick-install" ''
       set -e
+
+      echo "WARNING: quick-install is a VM/test installer with insecure defaults" >&2
+      echo "(root ssh login with password 'password123'). Do NOT use it on real hardware." >&2
 
       mkdir -p /mnt/boot /mnt/nix
       mount -o umask=0077 /dev/disk/by-label/BROS_BOOT /mnt/boot

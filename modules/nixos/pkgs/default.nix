@@ -10,20 +10,23 @@ let
   inherit (builtins)
     fromJSON
     readFile
-    toPath
     pathExists
     ;
   inherit (lib)
+    attrByPath
+    hasAttrByPath
     filter
     isAttrs
     isString
     mkOption
+    splitString
     ;
 
-  inherit (lib.types) path;
+  inherit (lib.types) nullOr path;
 
   packageFile = config.brainrotos.packages.v1.filePath;
-  data = if pathExists packageFile then (fromJSON (readFile packageFile)) else [ ];
+  data =
+    if packageFile != null && pathExists packageFile then (fromJSON (readFile packageFile)) else [ ];
 
   mkRetroApp =
     pkg:
@@ -47,7 +50,18 @@ let
   plainPackages' = filter isString data;
   versionedPackages' = filter isAttrs data;
 
-  plainPackages = map (pkg: pkgs."${pkg}") plainPackages';
+  # supports dotted attribute paths such as kdePackages.kate
+  resolvePlain =
+    pkg:
+    let
+      attrPath = splitString "." pkg;
+    in
+    if !hasAttrByPath attrPath pkgs then
+      throw "brainrotos: package '${pkg}' listed in the package file does not exist in nixpkgs"
+    else
+      attrByPath attrPath null pkgs;
+
+  plainPackages = map resolvePlain plainPackages';
   versionedPackages = map mkRetroApp versionedPackages';
 
   packages = versionedPackages ++ plainPackages;
@@ -55,10 +69,11 @@ in
 {
   options = {
     brainrotos.packages.v1.filePath = mkOption {
-      type = path;
-      # <brainrotos/packages.json> will throw if the file doesn't exist
-      default = toPath "${<brainrotos>}/packages.json";
-      description = "File path for package file.";
+      type = nullOr path;
+      # only evaluated when the option isn't overridden, which requires
+      # impure evaluation, null means no managed package file
+      default = <brainrotos> + "/packages.json";
+      description = "File path for package file, null for no managed packages.";
     };
   };
 

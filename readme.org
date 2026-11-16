@@ -36,8 +36,6 @@ Importing a json or toml file in the local config will be done easily, there can
 
 BrainrotOS will ship with hopefully good flatpak and appimage support, most normal users should be encouraged to use those distribution methods for their applications, as if they are on an image based distro like ublue.
 
-The bazaar flatpak store is currently installed as a flatpak on first boot, there is some sample configuration and some setup to run it as a background service for the user and automatically enable the gnome search provider.
-
 If this project goes anywhere, I can easily do flake updates and builds in github actions, and use something as a binary cache. Then the machines can run =nixos-rebuild boot= occasionally to stay up to date automatically.
 
 The target userbase will probably get by with a browser, steam and some basic utilities, but because of the NixOS base, you will have the full power of nix. I am not 100% sure if you can run a standalone home-manager installation on top of this, but that would be the dream.
@@ -117,7 +115,6 @@ nix run .#vm-installed       # boot it, UEFI, state persists across reboots
 
 * TODOs
 
-- [ ] krunner bazaar
 - [ ] GPU configs
   - [ ] better vm support?
   - [ ] amd

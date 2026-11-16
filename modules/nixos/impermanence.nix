@@ -44,7 +44,7 @@ in
               {
                 path,
                 persistPath ? "${cfg.persist}/rootfs/${path}",
-                permissions ? "1777",
+                permissions ? "0755",
                 user ? "root",
                 group ? "root",
                 wantedBy ? [ ],
@@ -77,7 +77,7 @@ in
               {
                 path,
                 persistPath ? "${cfg.persist}/rootfs/${path}",
-                permissions ? "1777",
+                permissions ? "0644",
                 user ? "root",
                 group ? "root",
                 wantedBy ? [ ],
@@ -110,14 +110,33 @@ in
           path = "/var/log";
           permissions = "711";
         }
-        "/var/lib/bluetooth"
-        "/root/.cache/nix"
+        {
+          path = "/var/lib/bluetooth";
+          permissions = "0700";
+        }
+        {
+          path = "/root/.cache/nix";
+          permissions = "0700";
+        }
         "/var/lib/systemd"
-        "/etc/NetworkManager/system-connections"
+        {
+          path = "/etc/NetworkManager/system-connections";
+          permissions = "0700";
+        }
         "/var/lib/fwupd"
         "/var/cache/fwupd"
-        "/var/lib/fprint"
-        "/var/db/sudo"
+        {
+          path = "/var/lib/fprint";
+          permissions = "0700";
+        }
+        {
+          # sudo creates this as 0711, the timestamp dir inside is 0700
+          path = "/var/db/sudo";
+          permissions = "0711";
+        }
+        # uid/gid maps, must be stable so users keep their uids
+        # (bind mounted early by the shadow restore activation script)
+        "/var/lib/nixos"
       ];
 
       brainrotos.impermanence.v1.files = [
@@ -173,7 +192,7 @@ in
             value = {
               wantedBy = [ "default.target" ];
               path = [ pkgs.util-linux ];
-              unitConfig.defaultDependencies = true;
+              unitConfig.DefaultDependencies = true;
               serviceConfig = {
                 Type = "oneshot";
                 RemainAfterExit = true;
@@ -222,40 +241,87 @@ in
     })
 
     # /etc/shadow (passwords)
-    # cannot be handled through files, must run before user setup
+    # cannot be handled through files, must be restored before the users
+    # activation script runs, so that existing hashes are kept and new users
+    # are added on top of them
     (mkIf cfg.enable (
       let
         pShadow = "${cfg.persist}/rootfs/etc/shadow";
+        pNixos = "${cfg.persist}/rootfs/var/lib/nixos";
+
+        saveShadow = pkgs.writeShellScript "persist_etc_shadow" ''
+          set -eu
+          [ -f /etc/shadow ] || exit 0
+          dir="$(dirname "${pShadow}")"
+          mkdir --parents "$dir"
+          tmp="$(mktemp --tmpdir="$dir" .shadow.XXXXXX)"
+          trap 'rm -f "$tmp"' EXIT
+          cp /etc/shadow "$tmp"
+          chmod 600 "$tmp"
+          sync "$tmp"
+          mv -f "$tmp" "${pShadow}"
+        '';
       in
       {
+        system.activationScripts.etc_shadow_restore = {
+          text = ''
+            # /var/lib/nixos holds the uid/gid maps used by the users script,
+            # it needs to be the persisted one before that runs
+            mkdir -p "${pNixos}" /var/lib/nixos
+            mountpoint -q /var/lib/nixos || mount --bind "${pNixos}" /var/lib/nixos
+
+            # only at boot, when no shadow has been generated yet
+            if [ ! -e /etc/shadow ] && [ -f "${pShadow}" ]; then
+              mkdir -p /etc
+              cp "${pShadow}" /etc/shadow.restore
+              chmod 600 /etc/shadow.restore
+              mv -f /etc/shadow.restore /etc/shadow
+            fi
+          '';
+        };
+
+        # the users script is a plain attrset unless sysusers/userborn is used
+        system.activationScripts.users = mkIf (
+          !config.systemd.sysusers.enable && !config.services.userborn.enable
+        ) { deps = [ "etc_shadow_restore" ]; };
+
         systemd.services."etc_shadow_persistence" = {
           enable = true;
           description = "Persist /etc/shadow on shutdown.";
           wantedBy = [ "sysinit.target" ];
-          before = [ "systemd-sysusers.service" ];
           unitConfig.RequiresMountsFor = [ "${cfg.persist}" ];
-          unitConfig.defaultDependencies = true;
-          path = [ pkgs.util-linux ];
+          unitConfig.DefaultDependencies = true;
+          path = [ pkgs.coreutils ];
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
-            ExecStart = pkgs.writeShellScript "restore_etc_shadow" ''
-              mkdir -p /etc
-              [ -f "${pShadow}" ] && cp ${pShadow} /etc/shadow
-              [ -f /etc/shadow ] && chmod 600 /etc/shadow
-            '';
+            ExecStart = saveShadow;
             # Service is stopped before shutdown
-            ExecStop = pkgs.writeShellScript "persist_etc_shadow" ''
-              mkdir --parents "${cfg.persist}/rootfs/etc"
-              cp /etc/shadow ${pShadow}
-            '';
+            ExecStop = saveShadow;
           };
+        };
+
+        # save whenever shadow changes (password changes, new users)
+        systemd.services."etc_shadow_save" = {
+          description = "Persist /etc/shadow after a change.";
+          unitConfig.RequiresMountsFor = [ "${cfg.persist}" ];
+          path = [ pkgs.coreutils ];
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = saveShadow;
+          };
+        };
+
+        systemd.paths."etc_shadow_save" = {
+          description = "Watch /etc/shadow for changes.";
+          wantedBy = [ "multi-user.target" ];
+          pathConfig.PathChanged = "/etc/shadow";
         };
       }
     ))
 
     # openssh
-    {
+    (mkIf cfg.enable {
       systemd.tmpfiles.rules = [ "d ${cfg.persist}/ssh 755 root root - -" ];
 
       services.openssh.hostKeys = [
@@ -269,6 +335,6 @@ in
           bits = 4096;
         }
       ];
-    }
+    })
   ];
 }
